@@ -8,7 +8,7 @@
     "preview": "vite preview --strictPort"
   },
   "dependencies": {
-    "vue": "^3.5.21",
+    "vue": "^3.5.22",
     "vue-use-monaco": "workspace:*"
   },
   "devDependencies": {

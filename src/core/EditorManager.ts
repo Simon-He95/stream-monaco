@@ -1,6 +1,6 @@
 import type { MonacoLanguage, MonacoOptions } from '../type'
 import { processedLanguage } from '../code.detect'
-import { defaultRevealDebounceMs, defaultScrollbar, padding } from '../constant'
+import { defaultRevealBatchOnIdleMs, defaultRevealDebounceMs, defaultScrollbar, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from '../constant'
 import { computeMinimalEdit } from '../minimalEdit'
 import * as monaco from '../monaco-shim'
 import { createHeightManager } from '../utils/height'
@@ -22,6 +22,7 @@ export class EditorManager {
   private cachedLineHeight: number | null = null
   private cachedComputedHeight: number | null = null
   private cachedLineCount: number | null = null
+  private lastKnownCodeDirty = false
 
   // read a small set of viewport/layout metrics once to avoid repeated DOM reads
   private measureViewport() {
@@ -107,7 +108,7 @@ export class EditorManager {
       const model = this.editorView!.getModel()
       const line = targetLine ?? model?.getLineCount() ?? 1
       // if revealBatchOnIdleMs is provided, use idle-batching: delay final reveal until idle
-      const batchMs = this.revealBatchOnIdleMsOption ?? this.options.revealBatchOnIdleMs
+      const batchMs = this.revealBatchOnIdleMsOption ?? this.options.revealBatchOnIdleMs ?? defaultRevealBatchOnIdleMs
       if (typeof batchMs === 'number' && batchMs > 0) {
         if (this.revealIdleTimerId != null) {
           clearTimeout(this.revealIdleTimerId)
@@ -225,17 +226,25 @@ export class EditorManager {
 
     this.editorView.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
-      // refresh cached viewport metrics in a single place
-      this.measureViewport()
-      this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
-      if (this.editorHeightManager?.isSuppressed())
-        return
-      this.editorHeightManager?.update()
+      // Defer expensive measurements to RAF to avoid forcing sync layout on
+      // the content-size-change event which can fire frequently.
+      this.rafScheduler.schedule('content-size-change', () => {
+        try {
+          this.measureViewport()
+          this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
+          if (this.editorHeightManager?.isSuppressed())
+            return
+          this.editorHeightManager?.update()
+        }
+        catch { }
+      })
     })
 
+    // Avoid calling getValue() synchronously on every content change; instead
+    // mark dirty and sync once per RAF frame to reduce CPU and style recalcs.
     this.editorView.onDidChangeModelContent(() => {
-      this.lastKnownCode = this.editorView!.getValue()
-      this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
+      this.lastKnownCodeDirty = true
+      this.rafScheduler.schedule('sync-last-known', () => this.syncLastKnownCode())
     })
 
     this.shouldAutoScroll = !!this.autoScrollInitial
@@ -258,6 +267,22 @@ export class EditorManager {
     this.maybeScrollToBottom()
 
     return this.editorView
+  }
+
+  private syncLastKnownCode() {
+    if (!this.editorView || !this.lastKnownCodeDirty)
+      return
+    try {
+      const model = this.editorView.getModel()
+      if (model) {
+        this.lastKnownCode = model.getValue()
+        this.cachedLineCount = model.getLineCount() ?? this.cachedLineCount
+      }
+    }
+    catch { }
+    finally {
+      this.lastKnownCodeDirty = false
+    }
   }
 
   updateCode(newCode: string, codeLanguage: string) {
@@ -324,23 +349,7 @@ export class EditorManager {
     if (processedCodeLanguage && model.getLanguageId() !== processedCodeLanguage)
       monaco.editor.setModelLanguage(model, processedCodeLanguage)
 
-    const lastLine = model.getLineCount()
-    const lastColumn = model.getLineMaxColumn(lastLine)
-    const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
-
-    const isReadOnly = this.editorView.getOption(monaco.editor.EditorOption.readOnly)
-    if (isReadOnly) {
-      model.applyEdits([{ range, text: appendText, forceMoveMarkers: true }])
-    }
-    else {
-      this.editorView.executeEdits('append', [{ range, text: appendText, forceMoveMarkers: true }])
-    }
-
-    try {
-      this.lastKnownCode = model.getValue()
-    }
-    catch { }
-
+    // Buffer-only; actual edit is applied in flushAppendBuffer once per frame
     if (appendText) {
       this.appendBuffer.push(appendText)
       if (!this.appendBufferScheduled) {
@@ -356,6 +365,26 @@ export class EditorManager {
     const model = this.editorView.getModel()
     if (!model)
       return
+    // Avoid expensive minimal edit calculation for extremely large documents
+    // or when the size delta is very large; fallback to full setValue.
+    try {
+      const maxChars = minimalEditMaxChars
+      const ratio = minimalEditMaxChangeRatio
+      const maxLen = Math.max(prev.length, next.length)
+      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+      if (prev.length + next.length > maxChars || changeRatio > ratio) {
+        const prevLineCount = model.getLineCount()
+        model.setValue(next)
+        this.lastKnownCode = next
+        const newLineCount = model.getLineCount()
+        this.cachedLineCount = newLineCount
+        if (newLineCount !== prevLineCount) {
+          this.maybeScrollToBottom(newLineCount)
+        }
+        return
+      }
+    }
+    catch { }
 
     const res = computeMinimalEdit(prev, next)
     if (!res)
@@ -400,9 +429,6 @@ export class EditorManager {
     else {
       this.editorView.executeEdits('append', [{ range, text, forceMoveMarkers: true }])
     }
-    if (this.lastKnownCode != null) {
-      this.lastKnownCode = this.lastKnownCode + text
-    }
     const newLineCount = model.getLineCount()
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount
@@ -429,6 +455,8 @@ export class EditorManager {
 
   cleanup() {
     this.rafScheduler.cancel('update')
+    this.rafScheduler.cancel('sync-last-known')
+    this.rafScheduler.cancel('content-size-change')
     this.pendingUpdate = null
     this.rafScheduler.cancel('append')
     this.appendBufferScheduled = false
@@ -456,6 +484,7 @@ export class EditorManager {
   safeClean() {
     this.rafScheduler.cancel('update')
     this.pendingUpdate = null
+    this.rafScheduler.cancel('sync-last-known')
 
     if (this.scrollWatcher) {
       this.scrollWatcher.dispose()

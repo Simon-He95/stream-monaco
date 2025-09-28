@@ -1,6 +1,6 @@
 import type { MonacoLanguage, MonacoOptions } from '../type'
 import { processedLanguage } from '../code.detect'
-import { defaultRevealDebounceMs, defaultScrollbar, padding } from '../constant'
+import { defaultRevealBatchOnIdleMs, defaultRevealDebounceMs, defaultScrollbar, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from '../constant'
 import { computeMinimalEdit } from '../minimalEdit'
 import * as monaco from '../monaco-shim'
 import { createHeightManager } from '../utils/height'
@@ -26,6 +26,7 @@ export class DiffEditorManager {
   private cachedScrollHeightDiff: number | null = null
   private cachedLineHeightDiff: number | null = null
   private cachedComputedHeightDiff: number | null = null
+  private lastKnownModifiedDirty = false
 
   // Read a batch of viewport/layout metrics for modified editor once to avoid repeated DOM reads
   private measureViewportDiff() {
@@ -133,7 +134,7 @@ export class DiffEditorManager {
       if (this.lastRevealLineDiff !== null && this.lastRevealLineDiff === line)
         return
 
-      const batchMs = this.revealBatchOnIdleMsOption ?? this.options.revealBatchOnIdleMs
+      const batchMs = this.revealBatchOnIdleMsOption ?? this.options.revealBatchOnIdleMs ?? defaultRevealBatchOnIdleMs
       if (typeof batchMs === 'number' && batchMs > 0) {
         if (this.revealIdleTimerIdDiff != null) {
           clearTimeout(this.revealIdleTimerIdDiff)
@@ -272,23 +273,37 @@ export class DiffEditorManager {
     const mEditor = this.diffEditorView.getModifiedEditor()
     oEditor.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
-      // refresh cached viewport metrics
-      this.cachedScrollHeightDiff = oEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
-      this.cachedLineHeightDiff = oEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
-      this.cachedComputedHeightDiff = this.computedHeight()
-      if (this.diffHeightManager?.isSuppressed())
-        return
-      this.diffHeightManager?.update()
+      this.rafScheduler.schedule('content-size-change-diff', () => {
+        try {
+          this.cachedScrollHeightDiff = oEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
+          this.cachedLineHeightDiff = oEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
+          this.cachedComputedHeightDiff = this.computedHeight()
+          if (this.diffHeightManager?.isSuppressed())
+            return
+          this.diffHeightManager?.update()
+        }
+        catch { }
+      })
     })
     mEditor.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
-      // refresh cached viewport metrics
-      this.cachedScrollHeightDiff = mEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
-      this.cachedLineHeightDiff = mEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
-      this.cachedComputedHeightDiff = this.computedHeight()
-      if (this.diffHeightManager?.isSuppressed())
-        return
-      this.diffHeightManager?.update()
+      this.rafScheduler.schedule('content-size-change-diff', () => {
+        try {
+          this.cachedScrollHeightDiff = mEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
+          this.cachedLineHeightDiff = mEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
+          this.cachedComputedHeightDiff = this.computedHeight()
+          if (this.diffHeightManager?.isSuppressed())
+            return
+          this.diffHeightManager?.update()
+        }
+        catch { }
+      })
+    })
+
+    // defer getValue reads for modified model to once-per-frame
+    mEditor.onDidChangeModelContent(() => {
+      this.lastKnownModifiedDirty = true
+      this.rafScheduler.schedule('sync-last-known-modified', () => this.syncLastKnownModified())
     })
 
     return this.diffEditorView
@@ -402,12 +417,7 @@ export class DiffEditorManager {
       if (lang && this.modifiedModel.getLanguageId() !== lang)
         monaco.editor.setModelLanguage(this.modifiedModel, lang)
     }
-    this.appendToModel(this.modifiedModel, appendText)
-    try {
-      this.lastKnownModifiedCode = this.modifiedModel.getValue()
-    }
-    catch { }
-
+    // Buffer-only; actual edit is applied in flushAppendBufferDiff
     this.appendBufferDiff.push(appendText)
     if (!this.appendBufferDiffScheduled) {
       this.appendBufferDiffScheduled = true
@@ -440,6 +450,8 @@ export class DiffEditorManager {
     this.rafScheduler.cancel('appendDiff')
     this.appendBufferDiffScheduled = false
     this.appendBufferDiff.length = 0
+    this.rafScheduler.cancel('content-size-change-diff')
+    this.rafScheduler.cancel('sync-last-known-modified')
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -500,6 +512,25 @@ export class DiffEditorManager {
       this.revealDebounceIdDiff = null
     }
     this.lastRevealLineDiff = null
+    this.rafScheduler.cancel('content-size-change-diff')
+    this.rafScheduler.cancel('sync-last-known-modified')
+  }
+
+  private syncLastKnownModified() {
+    if (!this.diffEditorView || !this.lastKnownModifiedDirty)
+      return
+    try {
+      const me = this.diffEditorView.getModifiedEditor()
+      const model = me.getModel()
+      if (model) {
+        this.lastKnownModifiedCode = model.getValue()
+        this.lastKnownModifiedLineCount = model.getLineCount()
+      }
+    }
+    catch { }
+    finally {
+      this.lastKnownModifiedDirty = false
+    }
   }
 
   private flushPendingDiffUpdate() {
@@ -577,8 +608,11 @@ export class DiffEditorManager {
       const lastColumn = model.getLineMaxColumn(prevLine)
       const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
       model.applyEdits([{ range, text, forceMoveMarkers: true }])
-      if (this.lastKnownModifiedCode != null)
-        this.lastKnownModifiedCode = this.lastKnownModifiedCode + text
+      // update lastKnownModifiedCode lazily based on model value to avoid drift
+      try {
+        this.lastKnownModifiedCode = model.getValue()
+      }
+      catch { }
 
       const newLine = model.getLineCount()
       // schedule a short RAF task to allow the editor to update layout/scroll heights
@@ -591,6 +625,24 @@ export class DiffEditorManager {
   }
 
   private applyMinimalEditToModel(model: monaco.editor.ITextModel, prev: string, next: string) {
+    try {
+      const maxChars = minimalEditMaxChars
+      const ratio = minimalEditMaxChangeRatio
+      const maxLen = Math.max(prev.length, next.length)
+      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+      if (prev.length + next.length > maxChars || changeRatio > ratio) {
+        model.setValue(next)
+        try {
+          if (model === this.modifiedModel) {
+            this.lastKnownModifiedLineCount = model.getLineCount()
+          }
+        }
+        catch { }
+        return
+      }
+    }
+    catch { }
+
     const res = computeMinimalEdit(prev, next)
     if (!res)
       return

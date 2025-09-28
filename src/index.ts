@@ -3,7 +3,7 @@ import type { MonacoLanguage, MonacoOptions, MonacoTheme } from './type'
 
 import { computed, watch } from 'vue'
 import { detectLanguage, processedLanguage } from './code.detect'
-import { defaultLanguages, defaultRevealDebounceMs, defaultThemes, padding } from './constant'
+import { defaultLanguages, defaultRevealDebounceMs, defaultThemes, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from './constant'
 import { DiffEditorManager } from './core/DiffEditorManager'
 import { EditorManager } from './core/EditorManager'
 import { isDark } from './isDark'
@@ -485,17 +485,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         : model.getLanguageId()
       if (processedCodeLanguage && model.getLanguageId() !== processedCodeLanguage)
         monaco.editor.setModelLanguage(model, processedCodeLanguage)
-      const lastLine = model.getLineCount()
-      const lastColumn = model.getLineMaxColumn(lastLine)
-      const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
-      const isReadOnly = editorView.getOption(monaco.editor.EditorOption.readOnly)
-      if (isReadOnly)
-        model.applyEdits([{ range, text: appendText, forceMoveMarkers: true }])
-      else editorView.executeEdits('append', [{ range, text: appendText, forceMoveMarkers: true }])
-      try {
-        lastKnownCode = model.getValue()
-      }
-      catch { }
+        // Buffer-only append for fallback path to match EditorManager behavior
       if (appendText) {
         appendBuffer.push(appendText)
         if (!appendBufferScheduled) {
@@ -513,6 +503,24 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     const model = editorView.getModel()
     if (!model)
       return
+    // Avoid expensive minimal edit on very large documents or huge change ratios
+    try {
+      const maxChars = minimalEditMaxChars
+      const ratio = minimalEditMaxChangeRatio
+      const maxLen = Math.max(prev.length, next.length)
+      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+      if (prev.length + next.length > maxChars || changeRatio > ratio) {
+        const prevLineCount = model.getLineCount()
+        model.setValue(next)
+        lastKnownCode = next
+        const newLineCount = model.getLineCount()
+        if (newLineCount !== prevLineCount) {
+          maybeScrollToBottom(newLineCount)
+        }
+        return
+      }
+    }
+    catch { }
 
     // 完全相同无需处理
     const res = computeMinimalEdit(prev, next)
