@@ -7,6 +7,8 @@
 
 `vue-use-monaco` 是一个结合 Vue、Monaco 编辑器和 Shiki 语法高亮的组合式函数库，专为流式输入更新和高效代码高亮而设计。它提供了完整的 Monaco 编辑器集成方案，适用于需要实时代码编辑和高亮的场景。
 
+IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `updateCode` (`updateThrottleMs = 50`) to reduce CPU usage under high-frequency streaming. Set `updateThrottleMs: 0` in `useMonaco()` options to restore previous behavior (only RAF-based coalescing).
+
 ### 特性
 
 - 🚀 **开箱即用** - 基于 Vue 3 组合式 API 设计
@@ -276,6 +278,24 @@ import { registerMonacoThemes } from 'vue-use-monaco'
 const highlighter = await registerMonacoThemes(allThemes, allLanguages)
 
 // 创建编辑器
+```
+### 浏览器级基准（更接近真实 Monaco）
+
+仓库内还提供了一个 Playwright 脚本 `scripts/playwright-bench.mjs`，它将在 headless Chromium 中加载 Monaco（通过 CDN）并运行高频更新，从而测量真实编辑器下的耗时与 long-task 计数。
+
+安装并运行（本地）：
+
+```bash
+pnpm add -D playwright
+# 若初次安装，请按 Playwright 指示安装浏览器二进制
+npx playwright install
+
+# 运行脚本（可指定参数 updates freqHz，第三个参数传 'append' 则使用 append 路径）
+pnpm run bench:playwright -- 2000 200
+pnpm run bench:playwright -- 2000 200 append
+```
+
+注意：该脚本会从 CDN 加载 Monaco（需网络），并在本地 headless Chromium 中执行，适合用于在本机或 CI（带浏览器支持）上做真实性能评估。
 const { createEditor, setTheme } = useMonaco({ themes: allThemes, languages: allLanguages })
 
 // 当你切换主题时：
@@ -288,6 +308,48 @@ catch (err) {
   // handle fail-to-load or other errors
 }
 ```
+
+## 性能与流式更新建议
+
+在 0.0.32 之后的版本引入了对高频流式更新的更细粒度控制：
+
+- `updateThrottleMs`（number）: 控制 `updateCode` 的时间节流窗口（ms）。默认值为 50ms。将其设为 0 表示仅使用 RAF 合并（原始行为）。
+- `minimalEditMaxChars`（number）: 控制在尝试“最小替换”之前允许的最大字符总和（prev.length + next.length）。超过该值将直接使用全量 `setValue`。可通过 `useMonaco({ minimalEditMaxChars })` 覆盖。
+- `minimalEditMaxChangeRatio`（number）: 当变更比例（|new-prev|/maxLen）超过此阈值时，放弃最小替换，改为全量替换。
+
+示例：
+
+```ts
+useMonaco({
+  updateThrottleMs: 50, // 推荐：30~100ms，根据场景调优
+  minimalEditMaxChars: 200000,
+  minimalEditMaxChangeRatio: 0.25,
+})
+```
+
+运行时调整节流：
+
+```ts
+const { setUpdateThrottleMs, getUpdateThrottleMs } = useMonaco()
+
+// 临时关闭时间节流（仅 RAF 合并）
+setUpdateThrottleMs(0)
+
+// 恢复为 50ms
+setUpdateThrottleMs(50)
+
+console.log('current throttle', getUpdateThrottleMs())
+```
+
+快速 benchmark：仓库内提供了一个轻量脚本 `scripts/stream-benchmark.mjs`，用于在 Node 环境下模拟高频 updateCode 场景（不依赖真实 Monaco，只模拟 wrapper 行为）。运行：
+
+```bash
+pnpm run bench
+# 可指定参数：pnpm run bench -- 5000 200 50
+# 参数含义：updates freqHz throttleMs
+```
+
+该脚本输出 JSON，包含总用时、平均每次更新耗时和最终文本长度，便于对比不同 `updateThrottleMs` 下的表现。
 
 // 批量（同帧）更新，两侧同时变化时更方便
 function pushNewDiff(newOriginal: string, newModified: string) {

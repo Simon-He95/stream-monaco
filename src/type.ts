@@ -345,6 +345,23 @@ export interface MonacoOptions
    * to batch many small appends and then perform one final jump to bottom. Default: undefined (disabled).
    */
   revealBatchOnIdleMs?: number
+  /**
+   * Time window (ms) used to throttle `updateCode` calls in addition to RAF batching.
+   * - 0 means only RAF-based coalescing (no extra time throttling).
+   * - Default (library): 50
+   */
+  updateThrottleMs?: number
+  /**
+   * When attempting the "minimal edit" algorithm, if prev.length + next.length
+   * exceeds this number the library will fall back to full `setValue` to avoid
+   * expensive diff computation on very large documents.
+   */
+  minimalEditMaxChars?: number
+  /**
+   * When the relative change ratio (|new-prev|/maxLen) exceeds this value the
+   * library will fall back to full `setValue` instead of attempting minimal edit.
+   */
+  minimalEditMaxChangeRatio?: number
   // 添加在编辑器创建之前的钩子
   onBeforeCreate?: (
     monaco: typeof import('monaco-editor'),

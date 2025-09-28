@@ -150,6 +150,16 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   const maxHeightCSS = getMaxHeightCSS()
   let lastContainer: HTMLElement | null = null
   let lastKnownCode: string | null = null
+  // Allow overriding heuristics and throttling via options
+  const minimalEditMaxCharsLocal = (monacoOptions as any).minimalEditMaxChars ?? minimalEditMaxChars
+  const minimalEditMaxChangeRatioLocal = (monacoOptions as any).minimalEditMaxChangeRatio ?? minimalEditMaxChangeRatio
+  // 时间节流（ms），0 表示仅使用 RAF 合并。
+  // 默认为了在高频流式写入场景下减轻 CPU，使用 50ms 的默认节流。
+  // 用户可以通过 monacoOptions.updateThrottleMs 覆盖（设为 0 恢复仅 RAF 合并行为）。
+  let updateThrottleMs: number = (monacoOptions as any).updateThrottleMs ?? 50
+  // 记录上次实际 flush 的时间戳（ms）及可能的延迟 timer
+  let lastFlushTime = 0
+  let updateThrottleTimer: number | null = null
   // 合并同一帧内的多次 updateCode 调用，降低布局与 DOM 抖动
   let pendingUpdate: { code: string, lang: string } | null = null
   // raf handled by rafScheduler
@@ -461,6 +471,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       themeWatcher = null
     }
 
+    // 清理可能由 updateCode 节流产生的延迟 timer
+    if (updateThrottleTimer != null) {
+      clearTimeout(updateThrottleTimer as unknown as number)
+      updateThrottleTimer = null
+    }
+
     // height managers are managed by the respective managers
 
     // Diff 相关释放由 diffMgr 处理，清空本地引用
@@ -485,7 +501,14 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         : model.getLanguageId()
       if (processedCodeLanguage && model.getLanguageId() !== processedCodeLanguage)
         monaco.editor.setModelLanguage(model, processedCodeLanguage)
-        // Buffer-only append for fallback path to match EditorManager behavior
+
+      // Fast-path: update lastKnownCode immediately when we can to avoid
+      // model.getValue() synchronous reads in later flushes
+      if (appendText && lastKnownCode != null) {
+        lastKnownCode = lastKnownCode + appendText
+      }
+
+      // Buffer-only append for fallback path to match EditorManager behavior
       if (appendText) {
         appendBuffer.push(appendText)
         if (!appendBufferScheduled) {
@@ -505,8 +528,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       return
     // Avoid expensive minimal edit on very large documents or huge change ratios
     try {
-      const maxChars = minimalEditMaxChars
-      const ratio = minimalEditMaxChangeRatio
+      const maxChars = minimalEditMaxCharsLocal
+      const ratio = minimalEditMaxChangeRatioLocal
       const maxLen = Math.max(prev.length, next.length)
       const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
       if (prev.length + next.length > maxChars || changeRatio > ratio) {
@@ -549,17 +572,39 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     // scheduled via rafScheduler
     if (!pendingUpdate)
       return
+    // record flush time for throttling decisions
+    lastFlushTime = Date.now()
     if (!editorView)
       return
     const model = editorView.getModel()
     if (!model)
       return
+    // pull and clear pending atomically
     const { code: newCode, lang: codeLanguage } = pendingUpdate
     pendingUpdate = null
+
+    // avoid repeated processedLanguage() calls
     const processedCodeLanguage = processedLanguage(codeLanguage)
+
+    // Use lastKnownCode preferentially to avoid forcing model.getValue() unless necessary
+    let prevCode = lastKnownCode
+    if (prevCode == null) {
+      try {
+        prevCode = model.getValue()
+        lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = ''
+      }
+    }
+
+    // Short-circuit: identical content -> nothing to do
+    if (prevCode === newCode)
+      return
+
     const languageId = model.getLanguageId()
 
-    // 语言不同：切换语言并全量写入（避免增量带来的 tokenization 错配）
+    // If language changes, set language and do full setValue (tokenization mismatch otherwise)
     if (languageId !== processedCodeLanguage) {
       if (processedCodeLanguage)
         monaco.editor.setModelLanguage(model, processedCodeLanguage)
@@ -573,26 +618,62 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       return
     }
 
-    const prevCode = lastKnownCode ?? editorView!.getValue()
-    if (prevCode === newCode)
-      return
-
-    // 仅追加（流式场景最常见）
+    // If this is a pure append (streaming) do a fast-append path
     if (newCode.startsWith(prevCode) && prevCode.length < newCode.length) {
       const suffix = newCode.slice(prevCode.length)
-      if (suffix)
+      if (suffix) {
+        // apply directly into append buffer to batch with other appends
         appendCode(suffix, codeLanguage)
+      }
       lastKnownCode = newCode
       return
     }
 
-    // 中间最小替换，减少 DOM 变动范围
-    const prevLineCount = model.getLineCount()
-    applyMinimalEdit(prevCode, newCode)
-    lastKnownCode = newCode
-    const newLineCount = model.getLineCount()
-    if (newLineCount !== prevLineCount) {
-      maybeScrollToBottom(newLineCount)
+    // For large documents or huge change ratio fall back to full replace quickly
+    try {
+      const maxChars = minimalEditMaxCharsLocal
+      const ratio = minimalEditMaxChangeRatioLocal
+      const maxLen = Math.max(prevCode.length, newCode.length)
+      const changeRatio = maxLen > 0 ? Math.abs(newCode.length - prevCode.length) / maxLen : 0
+      if (prevCode.length + newCode.length > maxChars || changeRatio > ratio) {
+        const prevLineCount = model.getLineCount()
+        model.setValue(newCode)
+        lastKnownCode = newCode
+        const newLineCount = model.getLineCount()
+        if (newLineCount !== prevLineCount) {
+          maybeScrollToBottom(newLineCount)
+        }
+        return
+      }
+    }
+    catch {
+      // if the heuristic check throws, fall through to minimal edit attempt
+    }
+
+    // 最小替换（computeMinimalEdit）在文档不太大且变更比例合理时才执行
+    try {
+      applyMinimalEdit(prevCode, newCode)
+      lastKnownCode = newCode
+      const newLineCount = model.getLineCount()
+      const prevLineCount = (prevCode ? prevCode.split('\n').length : 0) || model.getLineCount()
+      if (newLineCount !== prevLineCount) {
+        maybeScrollToBottom(newLineCount)
+      }
+    }
+    catch {
+      // fallback to safe full replace on unexpected errors
+      try {
+        const prevLineCount = model.getLineCount()
+        model.setValue(newCode)
+        lastKnownCode = newCode
+        const newLineCount = model.getLineCount()
+        if (newLineCount !== prevLineCount) {
+          maybeScrollToBottom(newLineCount)
+        }
+      }
+      catch {
+        // swallow to avoid breaking consumers
+      }
     }
   }
 
@@ -645,8 +726,40 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     }
     else {
       pendingUpdate = { code: newCode, lang: codeLanguage }
-      rafScheduler.schedule('update', () => flushPendingUpdate())
+      // RAF 合并 + 可选时间节流：
+      // - 如果 updateThrottleMs === 0，则保持原有行为（每帧 flush）
+      // - 否则确保距离上次实际 flush 至少为 updateThrottleMs，否则用 setTimeout 延迟触发
+      rafScheduler.schedule('update', () => {
+        if (!updateThrottleMs) {
+          flushPendingUpdate()
+          return
+        }
+        const now = Date.now()
+        const since = now - lastFlushTime
+        if (since >= updateThrottleMs) {
+          flushPendingUpdate()
+          return
+        }
+        // Already have a pending throttle timer: do nothing
+        if (updateThrottleTimer != null)
+          return
+        const wait = updateThrottleMs - since
+        updateThrottleTimer = (setTimeout(() => {
+          updateThrottleTimer = null
+          // use raf again to preserve batching semantics
+          rafScheduler.schedule('update', () => flushPendingUpdate())
+        }, wait) as unknown) as number
+      })
     }
+  }
+
+  // Runtime control: allow changing throttle at runtime
+  function setUpdateThrottleMs(ms: number) {
+    updateThrottleMs = ms
+  }
+
+  function getUpdateThrottleMs() {
+    return updateThrottleMs
   }
 
   // Diff RAF 更新由 DiffEditorManager 负责
@@ -764,6 +877,9 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     getMonacoInstance() {
       return monaco
     },
+    // Runtime throttle control
+    setUpdateThrottleMs,
+    getUpdateThrottleMs,
   }
 }
 

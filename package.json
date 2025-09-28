@@ -55,6 +55,8 @@
     "prepublishOnly": "nr build",
     "release": "bumpp && npm publish",
     "start": "esno src/index.ts",
+    "bench": "node scripts/stream-benchmark.mjs",
+    "bench:playwright": "node scripts/playwright-bench.mjs",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -73,6 +75,7 @@
     "eslint": "^9.36.0",
     "lint-staged": "^13.3.0",
     "picocolors": "^1.1.1",
+    "playwright": "1.38.0",
     "prettier": "^2.8.8",
     "rimraf": "^3.0.2",
     "tsdown": "^0.12.9",
