@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ShikiHighlighter } from 'vue-use-monaco'
+import type { ShikiHighlighter } from '../../../src'
 import { onMounted, ref } from 'vue'
 import { registerMonacoThemes, useMonaco } from '../../../src'
 

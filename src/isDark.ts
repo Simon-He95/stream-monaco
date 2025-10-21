@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref } from './reactivity'
 
 export const isDark = ref(false)
 

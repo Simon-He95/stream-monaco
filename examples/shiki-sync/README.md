@@ -46,7 +46,7 @@ Vue component (single-file component)
 ```vue
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { registerMonacoThemes, useMonaco } from 'vue-use-monaco'
+import { registerMonacoThemes, useMonaco } from 'stream-monaco'
 
 const container = ref<HTMLElement | null>(null)
 const preview = ref<HTMLDivElement | null>(null)

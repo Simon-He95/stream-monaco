@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "msbuild",
+      "args": [
+        "/property:GenerateFullPaths=true",
+        "/t:build",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "isBackground": false,
+      "group": "test"
+    }
+  ]
+}

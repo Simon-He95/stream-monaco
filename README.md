@@ -1,20 +1,24 @@
-## vue-use-monaco
+## stream-monaco
 
-[![NPM version](https://img.shields.io/npm/v/vue-use-monaco?color=a1b858&label=)](https://www.npmjs.com/package/vue-use-monaco)
+[![NPM version](https://img.shields.io/npm/v/stream-monaco?color=a1b858&label=)](https://www.npmjs.com/package/stream-monaco)
 [![中文版](https://img.shields.io/badge/docs-中文文档-blue)](README.zh-CN.md)
-[![NPM downloads](https://img.shields.io/npm/dm/vue-use-monaco)](https://www.npmjs.com/package/vue-use-monaco)
-[![Bundle size](https://img.shields.io/bundlephobia/minzip/vue-use-monaco)](https://bundlephobia.com/package/vue-use-monaco)
-[![License](https://img.shields.io/npm/l/vue-use-monaco)](./LICENSE)
+[![NPM downloads](https://img.shields.io/npm/dm/stream-monaco)](https://www.npmjs.com/package/stream-monaco)
+[![Bundle size](https://img.shields.io/bundlephobia/minzip/stream-monaco)](https://bundlephobia.com/package/stream-monaco)
+[![License](https://img.shields.io/npm/l/stream-monaco)](./LICENSE)
 
 ### Introduction
 
-vue-use-monaco is a Vue 3 composable that integrates Monaco Editor with Shiki syntax highlighting, optimized for streaming updates and efficient highlighting. It provides a complete Monaco integration suitable for real-time editing and theming.
+stream-monaco provides a framework-agnostic core for integrating Monaco Editor with Shiki syntax highlighting, optimized for streaming updates and efficient highlighting. It works great without Vue, while also offering a Vue-friendly API and examples.
 
 IMPORTANT: Since v0.0.32, `updateCode` is time-throttled by default (`updateThrottleMs = 50`) to reduce CPU usage under high-frequency streaming. Set `updateThrottleMs: 0` in `useMonaco()` options to restore previous RAF-only behavior.
 
+Note: Internally, reactivity now uses a thin adapter over `alien-signals`, so Vue is no longer a hard requirement at runtime for the core logic. Vue remains supported, but is an optional peer dependency. This makes the package more portable in non-Vue environments while keeping the same API.
+
 ### Features
 
-- 🚀 Ready to use with Vue 3 Composition API
+- 🚀 Works without Vue (framework-agnostic core)
+- 🌿 Ready to use with Vue 3 Composition API
+- 🔁 Use in any framework: Vue, React, Svelte, Solid, Preact, or plain JS/TS
 - 🎨 Shiki highlighting with TextMate grammars and VS Code themes
 - 🌓 Dark/Light theme switching
 - 📝 Streaming updates (append/minimal-edit)
@@ -37,19 +41,21 @@ Config: `useMonaco()` does not auto-sync an external Shiki highlighter; if you n
 ### Install
 
 ```bash
-pnpm add vue-use-monaco
+pnpm add stream-monaco
 # or
-npm install vue-use-monaco
+npm install stream-monaco
 # or
-yarn add vue-use-monaco
+yarn add stream-monaco
 ```
 
-### Basic usage
+Note: Vue is optional. If you don't use Vue, you don't need to install it.
+
+### Basic usage (Vue)
 
 ```vue
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const props = defineProps<{
   code: string
@@ -91,13 +97,38 @@ watch(
 </style>
 ```
 
-### Full config example
+### Basic usage (React)
+
+```tsx
+import { useEffect, useRef } from 'react'
+import { useMonaco } from 'stream-monaco'
+
+export function MonacoEditor() {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { createEditor, cleanupEditor } = useMonaco({
+    themes: ['vitesse-dark', 'vitesse-light'],
+    languages: ['typescript', 'javascript'],
+  })
+
+  useEffect(() => {
+    if (containerRef.current)
+      createEditor(containerRef.current, 'console.log("Hello, Monaco!")', 'typescript')
+    return () => cleanupEditor()
+  }, [])
+
+  return <div ref={containerRef} style={{ height: 500, border: '1px solid #e0e0e0' }} />
+}
+```
+
+Note: Svelte, Solid, and Preact integrations follow the same pattern — create a container element, call `createEditor` on mount, and `cleanupEditor` on unmount.
+
+### Full config example (Vue)
 
 ```vue
 <script setup lang="ts">
-import type { MonacoLanguage, MonacoTheme } from 'vue-use-monaco'
+import type { MonacoLanguage, MonacoTheme } from 'stream-monaco'
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const editorContainer = ref<HTMLElement>()
 
@@ -187,12 +218,12 @@ console.log('Editor instance:', editorInstance)
 </template>
 ```
 
-### Diff editor quick start
+### Diff editor quick start (Vue)
 
 ```vue
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const container = ref<HTMLElement>()
 
@@ -229,7 +260,7 @@ onMounted(async () => {
 If you also render Shiki snippets outside Monaco:
 
 ```ts
-import { registerMonacoThemes } from 'vue-use-monaco'
+import { registerMonacoThemes } from 'stream-monaco'
 
 const highlighter = await registerMonacoThemes(allThemes, allLanguages)
 
@@ -279,7 +310,7 @@ const { createEditor } = useMonaco({
 ```vue
 <script setup>
 import { onUnmounted } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const { cleanupEditor } = useMonaco()
 
@@ -291,6 +322,40 @@ onUnmounted(() => {
 
 3) Follow system theme (via your own dark state) and call `setTheme` accordingly.
 
+### Use without Vue (Vanilla)
+
+You can use the core in any environment. Here's a plain TypeScript/HTML example:
+
+```ts
+import { useMonaco } from 'stream-monaco'
+
+const container = document.getElementById('editor')!
+
+const { createEditor, updateCode, setTheme, cleanupEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['javascript', 'typescript'],
+  MAX_HEIGHT: 500,
+})
+
+await createEditor(container, 'console.log("Hello")', 'javascript')
+updateCode('console.log("World")', 'javascript')
+await setTheme('vitesse-light')
+
+// later
+cleanupEditor()
+```
+
+```html
+<div id="editor" style="height: 500px; border: 1px solid #e5e7eb;"></div>
+<script type="module" src="/main.ts"></script>
+```
+
+The library also exposes `isDark` (a small reactive ref) that follows `<html class="dark">` or the system color-scheme. Theme switching inside the editor is handled automatically.
+
+### Migration notes
+
+- v0.0.34+: Internal reactivity is implemented via a thin adapter over `alien-signals`, removing the hard dependency on Vue. Vue remains fully supported but is optional. No breaking changes to the public API.
+
 ### Troubleshooting
 
 - Editor invisible after build: configure Monaco web workers correctly.
@@ -300,7 +365,7 @@ onUnmounted(() => {
 ### Development
 
 ```bash
-git clone https://github.com/Simon-He95/vue-use-monaco.git
+git clone https://github.com/Simon-He95/stream-monaco.git
 pnpm install
 pnpm dev
 pnpm build

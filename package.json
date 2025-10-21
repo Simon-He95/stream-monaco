@@ -1,26 +1,34 @@
 {
-  "name": "vue-use-monaco",
+  "name": "stream-monaco",
   "type": "module",
-  "version": "0.0.33",
+  "version": "0.0.0",
   "packageManager": "pnpm@10.17.1",
-  "description": "A Vue library for integrating Monaco Editor with Shiki syntax highlighting, supporting real-time updates.",
+  "description": "A framework-agnostic library for integrating Monaco Editor with Shiki highlighting, optimized for streaming updates.",
   "author": "Simon He",
   "license": "MIT",
   "funding": "https://github.com/sponsors/Simon-He95",
-  "homepage": "https://github.com/Simon-He95/vue-use-monaco#readme",
+  "homepage": "https://github.com/Simon-He95/stream-monaco#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Simon-He95/vue-use-monaco.git"
+    "url": "git+https://github.com/Simon-He95/stream-monaco.git"
   },
-  "bugs": "https://github.com/Simon-He95/vue-use-monaco/issues",
+  "bugs": "https://github.com/Simon-He95/stream-monaco/issues",
   "keywords": [
-    "vue",
     "monaco-editor",
     "shiki",
     "syntax-highlighting",
     "real-time",
     "code-editor",
-    "vue-library"
+    "signals",
+    "framework-agnostic",
+    "framework",
+    "streaming",
+    "vue",
+    "react",
+    "svelte",
+    "solid",
+    "preact",
+    "vanilla"
   ],
   "sideEffects": false,
   "exports": {
@@ -61,11 +69,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "monaco-editor": "^0.52.2",
-    "vue": ">=3.0.0"
+    "monaco-editor": "^0.52.2"
   },
   "dependencies": {
     "@shikijs/monaco": "^3.13.0",
+    "alien-signals": "^2.0.0",
     "shiki": "^3.13.0"
   },
   "devDependencies": {

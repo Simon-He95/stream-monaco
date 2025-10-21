@@ -1,31 +1,27 @@
-## vue-use-monaco
+## stream-monaco
 
-[![NPM version](https://img.shields.io/npm/v/vue-use-monaco?color=a1b858&label=)](https://www.npmjs.com/package/vue-use-monaco)
+[![NPM version](https://img.shields.io/npm/v/stream-monaco?color=a1b858&label=)](https://www.npmjs.com/package/stream-monaco)
 [![English Docs](https://img.shields.io/badge/docs-English-blue)](README.md)
-[![NPM downloads](https://img.shields.io/npm/dm/vue-use-monaco)](https://www.npmjs.com/package/vue-use-monaco)
-[![Bundle size](https://img.shields.io/bundlephobia/minzip/vue-use-monaco)](https://bundlephobia.com/package/vue-use-monaco)
-[![License](https://img.shields.io/npm/l/vue-use-monaco)](./LICENSE)
+[![NPM downloads](https://img.shields.io/npm/dm/stream-monaco)](https://www.npmjs.com/package/stream-monaco)
+[![Bundle size](https://img.shields.io/bundlephobia/minzip/stream-monaco)](https://bundlephobia.com/package/stream-monaco)
+[![License](https://img.shields.io/npm/l/stream-monaco)](./LICENSE)
 
 ### 项目简介
 
-`vue-use-monaco` 是一个结合 Vue、Monaco 编辑器和 Shiki 语法高亮的组合式函数库，专为流式输入更新和高效代码高亮而设计。它提供了完整的 Monaco 编辑器集成方案，适用于需要实时代码编辑和高亮的场景。
+`stream-monaco` 提供一个与框架无关的内核来集成 Monaco 编辑器与 Shiki 语法高亮，针对流式更新与高效高亮做了优化；可在无 Vue 的环境下使用，同时也提供对 Vue 3 的友好支持与示例。
 
 IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `updateCode` (`updateThrottleMs = 50`) to reduce CPU usage under high-frequency streaming. Set `updateThrottleMs: 0` in `useMonaco()` options to restore previous behavior (only RAF-based coalescing).
 
 ### 特性
 
-- 🚀 **开箱即用** - 基于 Vue 3 组合式 API 设计
+- 🚀 **无需 Vue 也可使用** - 核心与框架无关
+- 🌿 **与 Vue 3 组合式 API 兼容** - 提供示例与最佳实践
+- 🔁 **可用于任意框架**：Vue、React、Svelte、Solid、Preact，或纯 JS/TS
+
+说明：内部响应式基于 `alien-signals` 的轻薄适配层实现，因此核心逻辑不再强依赖 Vue。Vue 仍然完全支持，但被标记为可选的 peer 依赖，使库在非 Vue 环境也可复用核心能力，且对现有 API 无破坏。
 - 🎨 **Shiki 高亮** - 使用 Shiki 实现高效的语法高亮，支持 TextMate 语法和 VS Code 主题
 - 🌓 **主题切换** - 自动监听 isDark 模式变化，智能切换明暗主题
 - 📝 **流式更新** - 支持流式输入更新，实时响应代码变化
-- 🔀 **Diff 编辑器** - 一行 API 创建 Monaco Diff Editor，支持流式/增量更新 original/modified
-- 🗑️ **内存管理** - 自动销毁编辑器实例，避免内存泄漏
-- 🔧 **高度可配置** - 支持所有 Monaco 编辑器原生配置选项
-- 🎯 **TypeScript 支持** - 完整的 TypeScript 类型定义
-
-### 快速 API 概览
-
-本库现在在包根导出了若干与主题/高亮器相关的辅助函数，便于高级用法：
 
 - `registerMonacoThemes(themes, languages): Promise<Highlighter>` — 使用 shiki 创建或获取高亮器并把主题注册到 Monaco，返回解析为 shiki highlighter 的 Promise，便于复用（例如渲染页面片段）。
 `getOrCreateHighlighter(themes, languages): Promise<Highlighter>` — 直接获取或创建一个 highlighter（并受内部缓存管理）。如需直接控制 shiki highlighter（例如调用 `codeToHtml` 或 `setTheme`），请使用此方法并自行处理加载/错误逻辑。
@@ -39,29 +35,29 @@ IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `
 使用 pnpm 安装：
 
 ```bash
-pnpm add vue-use-monaco
+pnpm add stream-monaco
 ```
 
 使用 npm 安装：
 
 ```bash
-npm install vue-use-monaco
+npm install stream-monaco
 ```
 
 使用 yarn 安装：
 
 ```bash
-yarn add vue-use-monaco
+yarn add stream-monaco
 ```
 
-### 基础使用
+### 基础使用（Vue）
 
 #### 简单示例
 
 ```vue
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const props = defineProps<{
   code: string
@@ -109,9 +105,9 @@ watch(
 
 ```vue
 <script setup lang="ts">
-import type { MonacoLanguage, MonacoTheme } from 'vue-use-monaco'
+import type { MonacoLanguage, MonacoTheme } from 'stream-monaco'
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const editorContainer = ref<HTMLElement>()
 
@@ -230,14 +226,68 @@ console.log('Editor instance:', editorInstance)
 </template>
 ```
 
-### Diff 编辑器使用
+### 在非 Vue 环境使用（Vanilla）
+
+无需安装 Vue，直接在任意 TS/JS 环境中使用：
+
+```ts
+import { useMonaco } from 'stream-monaco'
+
+const container = document.getElementById('editor')!
+
+const { createEditor, updateCode, setTheme, cleanupEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['javascript', 'typescript'],
+  MAX_HEIGHT: 500,
+})
+
+await createEditor(container, 'console.log("Hello")', 'javascript')
+updateCode('console.log("World")', 'javascript')
+await setTheme('vitesse-light')
+
+cleanupEditor()
+```
+
+```html
+<div id="editor" style="height: 500px; border: 1px solid #e5e7eb;"></div>
+<script type="module" src="/main.ts"></script>
+```
+
+库同时暴露 `isDark`（响应式 ref），会跟随 `<html class="dark">` 或系统颜色偏好，编辑器内部会自动应用主题。
+
+### React 基础用法
+
+```tsx
+import { useEffect, useRef } from 'react'
+import { useMonaco } from 'stream-monaco'
+
+export function MonacoEditor() {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { createEditor, cleanupEditor } = useMonaco({
+    themes: ['vitesse-dark', 'vitesse-light'],
+    languages: ['typescript', 'javascript'],
+  })
+
+  useEffect(() => {
+    if (containerRef.current)
+      createEditor(containerRef.current, 'console.log("Hello, Monaco!")', 'typescript')
+    return () => cleanupEditor()
+  }, [])
+
+  return <div ref={containerRef} style={{ height: 500, border: '1px solid #e0e0e0' }} />
+}
+```
+
+说明：Svelte/Solid/Preact 的集成方式与 React 类似——在挂载时创建编辑器实例，卸载时清理即可。
+
+### Diff 编辑器使用（Vue）
 
 #### 快速开始
 
 ```vue
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const container = ref<HTMLElement>()
 
@@ -275,7 +325,7 @@ onMounted(async () => {
 示例：
 
 ```ts
-import { registerMonacoThemes } from 'vue-use-monaco'
+import { registerMonacoThemes } from 'stream-monaco'
 
 // 在应用启动或创建编辑器前一次性注册全部 themes & langs
 const highlighter = await registerMonacoThemes(allThemes, allLanguages)
@@ -400,7 +450,7 @@ function pushModifiedChunk(chunk: string) {
 ```vue
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const el = ref<HTMLElement>()
 const { createEditor, appendCode, setLanguage, cleanupEditor } = useMonaco({
@@ -624,7 +674,7 @@ const { createEditor, setTheme } = useMonaco({
 
 ```bash
 # 克隆项目
-git clone https://github.com/Simon-He95/vue-use-monaco.git
+git clone https://github.com/Simon-He95/stream-monaco.git
 
 # 安装依赖
 pnpm install

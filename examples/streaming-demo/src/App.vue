@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'vue-use-monaco'
+import { useMonaco } from 'stream-monaco'
 
 const el = ref<HTMLElement | null>(null)
 const {

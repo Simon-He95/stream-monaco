@@ -1,6 +1,6 @@
 # Streaming Demo (Vue 3 + Vite)
 
-A minimal example showing streaming append and language switching using `vue-use-monaco`.
+A minimal example showing streaming append and language switching using `stream-monaco`.
 
 - Single editor with streaming `appendCode`
 - Switch language mid-stream with `setLanguage`

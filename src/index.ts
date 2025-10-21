@@ -1,7 +1,6 @@
-import type { WatchStopHandle } from 'vue'
+import type { WatchStopHandle } from './reactivity'
 import type { MonacoLanguage, MonacoOptions, MonacoTheme } from './type'
 
-import { computed, watch } from 'vue'
 import { detectLanguage, processedLanguage } from './code.detect'
 import { defaultLanguages, defaultRevealDebounceMs, defaultThemes, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from './constant'
 import { DiffEditorManager } from './core/DiffEditorManager'
@@ -10,6 +9,7 @@ import { isDark } from './isDark'
 import { computeMinimalEdit } from './minimalEdit'
 import * as monaco from './monaco-shim'
 import { preloadMonacoWorkers } from './preloadMonacoWorkers'
+import { computed, watch } from './reactivity'
 import { createRafScheduler } from './utils/raf'
 import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, setThemeRegisterPromise } from './utils/registerMonacoThemes'
 
@@ -79,7 +79,7 @@ import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, se
  *
  * @example
  * ```typescript
- * import { useMonaco } from 'vue-use-monaco'
+ * import { useMonaco } from 'stream-monaco'
  *
  * const { createEditor, updateCode, setTheme } = useMonaco({
  *   themes: ['vitesse-dark', 'vitesse-light'],

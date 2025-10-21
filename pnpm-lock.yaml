@@ -11,15 +11,15 @@ importers:
       '@shikijs/monaco':
         specifier: ^3.13.0
         version: 3.13.0
+      alien-signals:
+        specifier: ^2.0.0
+        version: 2.0.8
       monaco-editor:
         specifier: ^0.52.2
         version: 0.52.2
       shiki:
         specifier: ^3.13.0
         version: 3.13.0
-      vue:
-        specifier: '>=3.0.0'
-        version: 3.5.22(typescript@5.9.2)
     devDependencies:
       '@antfu/eslint-config':
         specifier: ^5.4.1
@@ -63,12 +63,12 @@ importers:
 
   examples/shiki-sync:
     dependencies:
+      stream-monaco:
+        specifier: workspace:*
+        version: link:../..
       vue:
         specifier: ^3.5.22
         version: 3.5.22(typescript@5.9.2)
-      vue-use-monaco:
-        specifier: workspace:*
-        version: link:../..
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^5.2.4
@@ -82,12 +82,12 @@ importers:
 
   examples/streaming-demo:
     dependencies:
+      stream-monaco:
+        specifier: workspace:*
+        version: link:../..
       vue:
         specifier: ^3.5.22
         version: 3.5.22(typescript@5.9.2)
-      vue-use-monaco:
-        specifier: workspace:*
-        version: link:../..
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^5.2.4
@@ -1067,6 +1067,9 @@ packages:
 
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
+
+  alien-signals@2.0.8:
+    resolution: {integrity: sha512-844G1VLkk0Pe2SJjY0J8vp8ADI73IM4KliNu2OGlYzWpO28NexEUvjHTcFjFX3VXoiUtwTbHxLNI9ImkcoBqzA==}
 
   ansi-escapes@5.0.0:
     resolution: {integrity: sha512-5GFMVX8HqE/TB+FuBJGuO5XG0WrsA6ptUqoODaT/n9mmUaZFkqnBueB4leqGBCmrUHnCnC4PCZTCd0E7QQ83bA==}
@@ -3587,6 +3590,8 @@ snapshots:
       fast-json-stable-stringify: 2.1.0
       json-schema-traverse: 0.4.1
       uri-js: 4.4.1
+
+  alien-signals@2.0.8: {}
 
   ansi-escapes@5.0.0:
     dependencies:

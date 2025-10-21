@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      'vue-use-monaco': path.resolve(__dirname, '../../src'),
+      'stream-monaco': path.resolve(__dirname, '../../src'),
     },
   },
   // Prevent Vite from pre-bundling the local package. If Vite optimizes it into
@@ -14,6 +14,6 @@ export default defineConfig({
   // location and may become unreachable. Excluding the package keeps it as
   // source so `new URL('./worker/..', import.meta.url)` resolves correctly.
   optimizeDeps: {
-    exclude: ['vue-use-monaco'],
+    exclude: ['stream-monaco'],
   },
 })
