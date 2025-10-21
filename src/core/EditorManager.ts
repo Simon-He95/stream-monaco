@@ -316,7 +316,15 @@ export class EditorManager {
       return
     }
 
-    const prevCode = this.lastKnownCode ?? this.editorView.getValue()
+    // If we have pending append buffer entries that haven't been flushed to the
+    // underlying model yet, prefer reading the authoritative model value rather
+    // than the optimistic `lastKnownCode` which may already include unflushed
+    // suffixes. Using the model avoids making append/minimal-edit decisions
+    // based on a state that hasn't been applied yet (which can cause
+    // duplicated tails).
+    const prevCode = (this.appendBuffer.length > 0)
+      ? this.editorView.getValue()
+      : (this.lastKnownCode ?? this.editorView.getValue())
     if (prevCode === newCode)
       return
 

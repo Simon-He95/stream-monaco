@@ -586,15 +586,31 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     // avoid repeated processedLanguage() calls
     const processedCodeLanguage = processedLanguage(codeLanguage)
 
-    // Use lastKnownCode preferentially to avoid forcing model.getValue() unless necessary
-    let prevCode = lastKnownCode
-    if (prevCode == null) {
+    // If there are pending append fragments buffered (not yet flushed to the
+    // model), prefer the authoritative model value instead of the optimistic
+    // `lastKnownCode`. Relying on `lastKnownCode` when the append buffer has
+    // unflushed data can lead to duplicated tails because `lastKnownCode` may
+    // already include the suffix while the model does not.
+    let prevCode: string | null = null
+    if (appendBuffer.length > 0) {
       try {
         prevCode = model.getValue()
         lastKnownCode = prevCode
       }
       catch {
         prevCode = ''
+      }
+    }
+    else {
+      prevCode = lastKnownCode
+      if (prevCode == null) {
+        try {
+          prevCode = model.getValue()
+          lastKnownCode = prevCode
+        }
+        catch {
+          prevCode = ''
+        }
       }
     }
 

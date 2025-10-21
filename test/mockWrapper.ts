@@ -21,7 +21,8 @@ export function createMockWrapper(opts: { updateThrottleMs?: number } = {}) {
       return
     const { code } = pendingUpdate
     pendingUpdate = null
-    const prev = lastKnownCode || model.getValue()
+  // Prefer the authoritative model value when there are buffered appends.
+  const prev = (appendBuffer.length > 0) ? model.getValue() : (lastKnownCode || model.getValue())
     if (prev === code)
       return
     if (code.startsWith(prev)) {
