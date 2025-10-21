@@ -2,7 +2,7 @@
   "name": "stream-monaco",
   "type": "module",
   "version": "0.0.1",
-  "packageManager": "pnpm@10.17.1",
+  "packageManager": "pnpm@10.18.3",
   "description": "A framework-agnostic library for integrating Monaco Editor with Shiki highlighting, optimized for streaming updates.",
   "author": "Simon He",
   "license": "MIT",
@@ -73,14 +73,14 @@
   },
   "dependencies": {
     "@shikijs/monaco": "^3.13.0",
-    "alien-signals": "^2.0.0",
+    "alien-signals": "^2.0.8",
     "shiki": "^3.13.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^5.4.1",
-    "@types/node": "^18.19.127",
+    "@types/node": "^18.19.130",
     "bumpp": "^8.2.1",
-    "eslint": "^9.36.0",
+    "eslint": "^9.38.0",
     "lint-staged": "^13.3.0",
     "picocolors": "^1.1.1",
     "playwright": "1.38.0",
@@ -88,7 +88,7 @@
     "rimraf": "^3.0.2",
     "tsdown": "^0.12.9",
     "tsx": "^3.14.0",
-    "typescript": "^5.9.2",
+    "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
   "lint-staged": {
