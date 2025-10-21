@@ -10,39 +10,49 @@ const {
   setLanguage,
   cleanupEditor,
 } = useMonaco({
+   wordWrap: 'on',
+  wrappingIndent: 'same',
   themes: ['vitesse-dark', 'vitesse-light'],
   languages: ['markdown', 'typescript'],
-  readOnly: false,
-  MAX_HEIGHT: 100,
+  readOnly: true,
+  MAX_HEIGHT: 400,
 })
 preloadMonacoWorkers()
 let i = 0
 let timer: any
 const markdown = `
-# Streaming Demo
-This demo shows how to stream code into the editor line by line.
+# Create Vue project
+npm create vue@latest electron-vue-chat
 
-You can see the code being appended every 300ms.
+# Navigate to project
+cd electron-vue-chat
 
-Feel free to modify the code or change the language after a few lines.
+# Install dependencies
+npm install
+npm install electron electron-builder vue-router
 
--- Enjoy!
-
+# Install dev dependencies
+npm install -D electron-dev-server concurrently wait-on
 `
-const streamedLines = markdown.split('\n')
+let contents = ''
 onMounted(async () => {
   if (!el.value)
     return
 
-  await createEditor(el.value, streamedLines[0], 'markdown')
+  await createEditor(el.value, contents, "shellscript")
   timer = setInterval(() => {
+    if(i>markdown.length){
+      clearInterval(timer)
+      return
+    }
     i++
-    appendCode(`\n${streamedLines[i]}`)
+    contents = markdown.slice(0, i)
+    updateCode(contents,"shellscript")
     // if (i === 5)
       // setLanguage('typescript')
-    if (i >= 10)
-      clearInterval(timer)
-  }, 300)
+    // if (i >= 10)
+    //   clearInterval(timer)
+  }, 0)
 })
 </script>
 
