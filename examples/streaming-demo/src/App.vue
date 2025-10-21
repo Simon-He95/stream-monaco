@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMonaco } from 'stream-monaco'
+import { useMonaco,preloadMonacoWorkers } from 'stream-monaco'
 
 const el = ref<HTMLElement | null>(null)
 const {
   createEditor,
   appendCode,
+  updateCode,
   setLanguage,
   cleanupEditor,
 } = useMonaco({
@@ -14,19 +15,31 @@ const {
   readOnly: false,
   MAX_HEIGHT: 100,
 })
-
+preloadMonacoWorkers()
 let i = 0
 let timer: any
+const markdown = `
+# Streaming Demo
+This demo shows how to stream code into the editor line by line.
 
+You can see the code being appended every 300ms.
+
+Feel free to modify the code or change the language after a few lines.
+
+-- Enjoy!
+
+`
+const streamedLines = markdown.split('\n')
 onMounted(async () => {
   if (!el.value)
     return
-  await createEditor(el.value, '# Stream start\n', 'markdown')
+
+  await createEditor(el.value, streamedLines[0], 'markdown')
   timer = setInterval(() => {
     i++
-    appendCode(`- line ${i}\n`)
-    if (i === 5)
-      setLanguage('typescript')
+    appendCode(`\n${streamedLines[i]}`)
+    // if (i === 5)
+      // setLanguage('typescript')
     if (i >= 10)
       clearInterval(timer)
   }, 300)
