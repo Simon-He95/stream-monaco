@@ -39,26 +39,19 @@ export function watch<T>(
     if (!initialized) {
       initialized = true
       if (options.immediate) {
-        const capturedOldVal = oldVal
         if (options.flush === 'post')
-          queueMicrotask(() => cb(newVal, capturedOldVal))
+          queueMicrotask(() => cb(newVal, oldVal))
         else
-          cb(newVal, capturedOldVal)
+          cb(newVal, oldVal)
       }
-      oldVal = newVal
     }
     else if (!Object.is(newVal, oldVal)) {
-      const capturedOldVal = oldVal
       if (options.flush === 'post')
-        queueMicrotask(() => cb(newVal, capturedOldVal))
+        queueMicrotask(() => cb(newVal, oldVal))
       else
-        cb(newVal, capturedOldVal)
-      oldVal = newVal
+        cb(newVal, oldVal)
     }
-    else {
-      // Even when values are equal, we need to update oldVal in case it's the same object reference
-      oldVal = newVal
-    }
+    oldVal = newVal
   })
   return stop
 }
