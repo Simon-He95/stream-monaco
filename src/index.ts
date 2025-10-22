@@ -55,6 +55,7 @@ import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, se
  *   getEditorView: () => monaco.editor.IStandaloneCodeEditor | null,
  *   getDiffEditorView: () => monaco.editor.IStandaloneDiffEditor | null,
  *   getDiffModels: () => { original: monaco.editor.ITextModel | null, modified: monaco.editor.ITextModel | null },
+ *   getCode: () => string | { original: string, modified: string } | null,
  * }} 返回对象包含以下方法和属性：
  *
  * @property {Function} createEditor - 创建并挂载 Monaco 编辑器到指定容器
@@ -74,6 +75,7 @@ import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, se
  * @property {Function} getEditorView - 获取当前编辑器实例
  * @property {Function} getDiffEditorView - 获取当前 Diff 编辑器实例
  * @property {Function} getDiffModels - 获取 Diff 的 original/modified 两个模型
+ * @property {Function} getCode - 获取当前编辑器或 Diff 编辑器中的代码内容
  *
  * @throws {Error} 当主题数组不是数组或长度小于2时抛出错误
  *
@@ -896,6 +898,30 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     // Runtime throttle control
     setUpdateThrottleMs,
     getUpdateThrottleMs,
+    // 获取当前编辑器中的代码
+    getCode() {
+      // 如果是普通编辑器
+      if (editorView) {
+        try {
+          return editorView.getModel()?.getValue() ?? null
+        }
+        catch {
+          return null
+        }
+      }
+      // 如果是 Diff 编辑器
+      if (diffEditorView || (originalModel && modifiedModel)) {
+        try {
+          const original = originalModel?.getValue() ?? ''
+          const modified = modifiedModel?.getValue() ?? ''
+          return { original, modified }
+        }
+        catch {
+          return null
+        }
+      }
+      return null
+    },
   }
 }
 

@@ -119,6 +119,7 @@ const {
   getCurrentTheme,
   getEditor,
   getEditorView,
+  getCode,
   cleanupEditor,
 } = useMonaco({
   // 主题配置 - 至少需要两个主题（暗色/亮色）
@@ -203,6 +204,16 @@ console.log('Monaco editor API:', monacoEditor)
 // 获取编辑器实例
 const editorInstance = getEditorView()
 console.log('Editor instance:', editorInstance)
+
+// 获取编辑器当前代码（在用户手动编辑后非常有用）
+function getCurrentCode() {
+  const code = getCode()
+  if (code) {
+    console.log('当前代码:', code)
+    return code
+  }
+  return null
+}
 </script>
 
 <template>
@@ -279,6 +290,69 @@ export function MonacoEditor() {
 ```
 
 说明：Svelte/Solid/Preact 的集成方式与 React 类似——在挂载时创建编辑器实例，卸载时清理即可。
+
+### 获取当前代码（getCode）
+
+创建编辑器后，您可以随时使用 `getCode()` 获取当前的代码内容。这在用户手动编辑编辑器内容时特别有用：
+
+```vue
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { useMonaco } from 'stream-monaco'
+
+const container = ref<HTMLElement>()
+
+const { createEditor, updateCode, getCode, cleanupEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['javascript', 'typescript'],
+})
+
+onMounted(async () => {
+  if (container.value) {
+    await createEditor(container.value, 'console.log("hello")', 'javascript')
+  }
+})
+
+// 在更新或用户编辑后获取当前代码
+function handleSubmit() {
+  const currentCode = getCode()
+  if (currentCode) {
+    console.log('提交代码:', currentCode)
+    // 发送到 API、保存到存储等
+  }
+}
+
+// 程序化更新代码
+function replaceCode() {
+  updateCode('console.log("world")', 'javascript')
+  
+  // 获取新代码
+  setTimeout(() => {
+    const newCode = getCode()
+    console.log('更新后的代码:', newCode)
+  }, 100)
+}
+</script>
+
+<template>
+  <div>
+    <div ref="container" class="editor" />
+    <button @click="handleSubmit">提交代码</button>
+    <button @click="replaceCode">替换代码</button>
+  </div>
+</template>
+```
+
+对于 Diff 编辑器，`getCode()` 返回两侧的代码：
+
+```ts
+const { createDiffEditor, getCode } = useMonaco()
+
+await createDiffEditor(container, '旧代码', '新代码', 'javascript')
+
+const codes = getCode()
+// codes = { original: '旧代码', modified: '新代码' }
+```
 
 ### Diff 编辑器使用（Vue）
 
@@ -585,6 +659,7 @@ modified?.onDidChangeContent?.(() => { /* ... */ })
 | `getEditor`            | `() => typeof monaco.editor`                                                                         | 获取 Monaco 的静态 editor 对象                 |
 | `getEditorView`        | `() => MonacoEditor \| null`                                                                          | 获取当前编辑器实例                             |
 | `getDiffEditorView`    | `() => MonacoDiffEditor \| null`                                                                      | 获取当前 Diff 编辑器实例                       |
+| `getCode`              | `() => string \| { original: string, modified: string } \| null`                                     | **获取编辑器当前代码**<br>- 普通编辑器返回 `string`<br>- Diff 编辑器返回 `{ original, modified }`<br>- 无编辑器返回 `null`<br>**用途**：获取用户手动编辑后的最新代码或程序更新后的内容 |
 | `appendOriginal`       | `(appendText: string, codeLanguage?: string) => void`                                                | 在 original 末尾追加（显式流式）               |
 | `appendModified`       | `(appendText: string, codeLanguage?: string) => void`                                                | 在 modified 末尾追加（显式流式）               |
 

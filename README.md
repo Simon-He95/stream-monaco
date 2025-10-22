@@ -38,6 +38,46 @@ Note: If you only use Monaco and pass all `themes` to `createEditor`, typically 
 
 Config: `useMonaco()` does not auto-sync an external Shiki highlighter; if you need external Shiki snippets to follow theme changes, call `getOrCreateHighlighter(...)` and `highlighter.setTheme(...)` yourself.
 
+### API Reference
+
+#### useMonaco() Returns
+
+The `useMonaco()` function returns an object with the following methods:
+
+##### Editor Management
+- **`createEditor(container, code, language)`** - Create and mount Monaco editor to a container
+- **`createDiffEditor(container, originalCode, modifiedCode, language)`** - Create and mount Diff editor
+- **`cleanupEditor()`** - Destroy editor and cleanup resources
+- **`getEditorView()`** - Get current editor instance (IStandaloneCodeEditor | null)
+- **`getDiffEditorView()`** - Get current Diff editor instance (IStandaloneDiffEditor | null)
+- **`getEditor()`** - Get Monaco's static editor object for calling static methods
+
+##### Code Operations
+- **`updateCode(newCode, language)`** - Update editor content and language (incremental update when possible)
+- **`appendCode(appendText, language?)`** - Append text to the end of editor (optimized for streaming)
+- **`getCode()`** - **Get current code from editor**
+  - Returns `string` for normal editor
+  - Returns `{ original: string, modified: string }` for diff editor
+  - Returns `null` if no editor exists
+  - **Use case**: Get the latest code after user manually edits the editor or after programmatic updates
+
+##### Diff Editor Operations
+- **`updateDiff(originalCode, modifiedCode, language?)`** - Update both sides of diff editor
+- **`updateOriginal(newCode, language?)`** - Update only the original side
+- **`updateModified(newCode, language?)`** - Update only the modified side
+- **`appendOriginal(appendText, language?)`** - Append to original side (streaming)
+- **`appendModified(appendText, language?)`** - Append to modified side (streaming)
+- **`getDiffModels()`** - Get both diff models: `{ original, modified }`
+
+##### Theme & Language
+- **`setTheme(theme)`** - Switch editor theme (returns Promise)
+- **`setLanguage(language)`** - Switch editor language
+- **`getCurrentTheme()`** - Get current theme name
+
+##### Performance Control
+- **`setUpdateThrottleMs(ms)`** - Change update throttle at runtime
+- **`getUpdateThrottleMs()`** - Get current throttle value
+
 ### Install
 
 ```bash
@@ -140,6 +180,7 @@ const {
   getCurrentTheme,
   getEditor,
   getEditorView,
+  getCode,
   cleanupEditor,
 } = useMonaco({
   themes: ['github-dark', 'github-light'],
@@ -195,6 +236,16 @@ console.log('Monaco editor API:', monacoEditor)
 
 const editorInstance = getEditorView()
 console.log('Editor instance:', editorInstance)
+
+// Get current code from editor (useful after user manually edits)
+function getCurrentCode() {
+  const code = getCode()
+  if (code) {
+    console.log('Current code:', code)
+    return code
+  }
+  return null
+}
 </script>
 
 <template>
@@ -216,6 +267,69 @@ console.log('Editor instance:', editorInstance)
     <div ref="editorContainer" class="editor" />
   </div>
 </template>
+```
+
+### Get current code (getCode)
+
+After creating an editor, you can retrieve the current code content at any time using `getCode()`. This is especially useful when users manually edit the editor content:
+
+```vue
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { useMonaco } from 'stream-monaco'
+
+const container = ref<HTMLElement>()
+
+const { createEditor, updateCode, getCode, cleanupEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['javascript', 'typescript'],
+})
+
+onMounted(async () => {
+  if (container.value) {
+    await createEditor(container.value, 'console.log("hello")', 'javascript')
+  }
+})
+
+// Get current code after updates or user edits
+function handleSubmit() {
+  const currentCode = getCode()
+  if (currentCode) {
+    console.log('Submitting code:', currentCode)
+    // Send to API, save to storage, etc.
+  }
+}
+
+// Update code programmatically
+function replaceCode() {
+  updateCode('console.log("world")', 'javascript')
+  
+  // Get the new code
+  setTimeout(() => {
+    const newCode = getCode()
+    console.log('Updated code:', newCode)
+  }, 100)
+}
+</script>
+
+<template>
+  <div>
+    <div ref="container" class="editor" />
+    <button @click="handleSubmit">Submit Code</button>
+    <button @click="replaceCode">Replace Code</button>
+  </div>
+</template>
+```
+
+For Diff editors, `getCode()` returns both sides:
+
+```ts
+const { createDiffEditor, getCode } = useMonaco()
+
+await createDiffEditor(container, 'old code', 'new code', 'javascript')
+
+const codes = getCode()
+// codes = { original: 'old code', modified: 'new code' }
 ```
 
 ### Diff editor quick start (Vue)
