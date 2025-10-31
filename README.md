@@ -303,7 +303,7 @@ function handleSubmit() {
 // Update code programmatically
 function replaceCode() {
   updateCode('console.log("world")', 'javascript')
-  
+
   // Get the new code
   setTimeout(() => {
     const newCode = getCode()

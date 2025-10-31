@@ -325,7 +325,7 @@ function handleSubmit() {
 // 程序化更新代码
 function replaceCode() {
   updateCode('console.log("world")', 'javascript')
-  
+
   // 获取新代码
   setTimeout(() => {
     const newCode = getCode()
