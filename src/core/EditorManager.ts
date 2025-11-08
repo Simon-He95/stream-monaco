@@ -7,6 +7,16 @@ import { createHeightManager } from '../utils/height'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
+const RAF_KINDS = [
+  'maybe-scroll',
+  'reveal',
+  'maybe-resume',
+  'content-size-change',
+  'sync-last-known',
+  'update',
+  'append',
+] as const
+
 export class EditorManager {
   private editorView: monaco.editor.IStandaloneCodeEditor | null = null
   private lastContainer: HTMLElement | null = null
@@ -55,6 +65,34 @@ export class EditorManager {
   private revealIdleTimerId: number | null = null
   private revealStrategyOption?: 'bottom' | 'centerIfOutside' | 'center'
   private revealBatchOnIdleMsOption?: number
+
+  private cancelRafs() {
+    for (const kind of RAF_KINDS)
+      this.rafScheduler.cancel(kind)
+  }
+
+  private clearRevealTimers() {
+    if (this.revealDebounceId != null) {
+      clearTimeout(this.revealDebounceId)
+      this.revealDebounceId = null
+    }
+    if (this.revealIdleTimerId != null) {
+      clearTimeout(this.revealIdleTimerId)
+      this.revealIdleTimerId = null
+    }
+  }
+
+  private resetAppendState() {
+    this.appendBufferScheduled = false
+    this.appendBuffer.length = 0
+  }
+
+  private clearAsyncWork() {
+    this.cancelRafs()
+    this.pendingUpdate = null
+    this.resetAppendState()
+    this.clearRevealTimers()
+  }
 
   constructor(
     private options: MonacoOptions,
@@ -316,15 +354,34 @@ export class EditorManager {
       return
     }
 
-    // If we have pending append buffer entries that haven't been flushed to the
-    // underlying model yet, prefer reading the authoritative model value rather
-    // than the optimistic `lastKnownCode` which may already include unflushed
-    // suffixes. Using the model avoids making append/minimal-edit decisions
-    // based on a state that hasn't been applied yet (which can cause
-    // duplicated tails).
-    const prevCode = (this.appendBuffer.length > 0)
-      ? this.editorView.getValue()
-      : (this.lastKnownCode ?? this.editorView.getValue())
+    let prevCode: string
+    if (this.appendBuffer.length > 0) {
+      // Drop the buffered appends and resync from the authoritative model so we
+      // don't replay stale data after applying this update. This preserves the
+      // per-frame batching model instead of forcing an immediate DOM write.
+      this.appendBuffer.length = 0
+      this.appendBufferScheduled = false
+      this.rafScheduler.cancel('append')
+      try {
+        prevCode = model.getValue()
+        this.lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = this.lastKnownCode ?? ''
+      }
+    }
+    else if (this.lastKnownCode != null) {
+      prevCode = this.lastKnownCode
+    }
+    else {
+      try {
+        prevCode = model.getValue()
+        this.lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = ''
+      }
+    }
     if (prevCode === newCode)
       return
 
@@ -462,13 +519,7 @@ export class EditorManager {
   }
 
   cleanup() {
-    this.rafScheduler.cancel('update')
-    this.rafScheduler.cancel('sync-last-known')
-    this.rafScheduler.cancel('content-size-change')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('append')
-    this.appendBufferScheduled = false
-    this.appendBuffer.length = 0
+    this.clearAsyncWork()
 
     if (this.editorView) {
       this.editorView.dispose()
@@ -487,20 +538,17 @@ export class EditorManager {
       this.editorHeightManager.dispose()
       this.editorHeightManager = null
     }
+    this._hasScrollBar = false
+    this.shouldAutoScroll = !!this.autoScrollInitial
+    this.lastScrollTop = 0
   }
 
   safeClean() {
-    this.rafScheduler.cancel('update')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('sync-last-known')
+    this.clearAsyncWork()
 
     if (this.scrollWatcher) {
       this.scrollWatcher.dispose()
       this.scrollWatcher = null
-    }
-    if (this.revealDebounceId != null) {
-      clearTimeout(this.revealDebounceId)
-      this.revealDebounceId = null
     }
 
     this._hasScrollBar = false

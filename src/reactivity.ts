@@ -25,7 +25,12 @@ export function computed<T>(getter: () => T): Ref<T> {
   })
 }
 
-interface WatchOptions { immediate?: boolean, flush?: 'post' | 'sync' }
+interface WatchOptions {
+  immediate?: boolean
+  flush?: 'post' | 'sync'
+  createGuardToken?: () => unknown
+  guard?: (token: unknown) => boolean
+}
 
 export function watch<T>(
   source: () => T,
@@ -39,17 +44,31 @@ export function watch<T>(
     if (!initialized) {
       initialized = true
       if (options.immediate) {
-        if (options.flush === 'post')
-          queueMicrotask(() => cb(newVal, oldVal))
-        else
+        if (options.flush === 'post') {
+          const token = options.createGuardToken?.()
+          queueMicrotask(() => {
+            if (options.guard && !options.guard(token))
+              return
+            cb(newVal, oldVal)
+          })
+        }
+        else {
           cb(newVal, oldVal)
+        }
       }
     }
     else if (!Object.is(newVal, oldVal)) {
-      if (options.flush === 'post')
-        queueMicrotask(() => cb(newVal, oldVal))
-      else
+      if (options.flush === 'post') {
+        const token = options.createGuardToken?.()
+        queueMicrotask(() => {
+          if (options.guard && !options.guard(token))
+            return
+          cb(newVal, oldVal)
+        })
+      }
+      else {
         cb(newVal, oldVal)
+      }
     }
     oldVal = newVal
   })

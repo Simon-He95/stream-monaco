@@ -7,6 +7,16 @@ import { createHeightManager } from '../utils/height'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
+const DIFF_RAF_KINDS = [
+  'maybe-scroll-diff',
+  'revealDiff',
+  'maybe-resume-diff',
+  'content-size-change-diff',
+  'sync-last-known-modified',
+  'diff',
+  'appendDiff',
+] as const
+
 export class DiffEditorManager {
   private diffEditorView: monaco.editor.IStandaloneDiffEditor | null = null
   private originalModel: monaco.editor.ITextModel | null = null
@@ -60,6 +70,35 @@ export class DiffEditorManager {
 
   private rafScheduler = createRafScheduler()
   private diffHeightManager: ReturnType<typeof createHeightManager> | null = null
+
+  private cancelRafs() {
+    for (const kind of DIFF_RAF_KINDS)
+      this.rafScheduler.cancel(kind)
+  }
+
+  private clearRevealTimers() {
+    if (this.revealDebounceIdDiff != null) {
+      clearTimeout(this.revealDebounceIdDiff)
+      this.revealDebounceIdDiff = null
+    }
+    if (this.revealIdleTimerIdDiff != null) {
+      clearTimeout(this.revealIdleTimerIdDiff)
+      this.revealIdleTimerIdDiff = null
+    }
+    this.lastRevealLineDiff = null
+  }
+
+  private resetAppendState() {
+    this.appendBufferDiffScheduled = false
+    this.appendBufferDiff.length = 0
+  }
+
+  private clearAsyncWork() {
+    this.cancelRafs()
+    this.pendingDiffUpdate = null
+    this.resetAppendState()
+    this.clearRevealTimers()
+  }
 
   constructor(
     private options: MonacoOptions,
@@ -445,13 +484,7 @@ export class DiffEditorManager {
   }
 
   cleanup() {
-    this.rafScheduler.cancel('diff')
-    this.pendingDiffUpdate = null
-    this.rafScheduler.cancel('appendDiff')
-    this.appendBufferDiffScheduled = false
-    this.appendBufferDiff.length = 0
-    this.rafScheduler.cancel('content-size-change-diff')
-    this.rafScheduler.cancel('sync-last-known-modified')
+    this.clearAsyncWork()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -482,17 +515,13 @@ export class DiffEditorManager {
       this.lastContainer.innerHTML = ''
       this.lastContainer = null
     }
-    // clear any pending reveal debounce and reset last reveal cache
-    if (this.revealDebounceIdDiff != null) {
-      clearTimeout(this.revealDebounceIdDiff)
-      this.revealDebounceIdDiff = null
-    }
-    this.lastRevealLineDiff = null
+    this._hasScrollBar = false
+    this.shouldAutoScrollDiff = !!(this.autoScrollInitial && this.diffAutoScroll)
+    this.lastScrollTopDiff = 0
   }
 
   safeClean() {
-    this.rafScheduler.cancel('diff')
-    this.pendingDiffUpdate = null
+    this.clearAsyncWork()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -507,13 +536,6 @@ export class DiffEditorManager {
       this.diffHeightManager.dispose()
       this.diffHeightManager = null
     }
-    if (this.revealDebounceIdDiff != null) {
-      clearTimeout(this.revealDebounceIdDiff)
-      this.revealDebounceIdDiff = null
-    }
-    this.lastRevealLineDiff = null
-    this.rafScheduler.cancel('content-size-change-diff')
-    this.rafScheduler.cancel('sync-last-known-modified')
   }
 
   private syncLastKnownModified() {
@@ -573,18 +595,31 @@ export class DiffEditorManager {
     }
 
     // If we have buffered appends for the modified side that haven't been
-    // flushed yet, prefer the authoritative model value rather than the
-    // optimistic `lastKnownModifiedCode` which may already include unflushed
-    // suffixes. This avoids appending duplicate tails when we decide the
-    // new `modified` is an append of the previous content.
-    let prevM: string = this.lastKnownModifiedCode!
+    // flushed yet, drop them and resync from the model so we don't replay stale
+    // fragments after processing this authoritative update.
+    let prevM: string
     if (this.appendBufferDiff.length > 0) {
+      this.appendBufferDiff.length = 0
+      this.appendBufferDiffScheduled = false
+      this.rafScheduler.cancel('appendDiff')
       try {
         prevM = m.getValue()
         this.lastKnownModifiedCode = prevM
       }
       catch {
         prevM = this.lastKnownModifiedCode ?? ''
+      }
+    }
+    else if (this.lastKnownModifiedCode != null) {
+      prevM = this.lastKnownModifiedCode
+    }
+    else {
+      try {
+        prevM = m.getValue()
+        this.lastKnownModifiedCode = prevM
+      }
+      catch {
+        prevM = ''
       }
     }
     const prevMLineCount = m.getLineCount()
