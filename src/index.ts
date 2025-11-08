@@ -12,7 +12,6 @@ import { preloadMonacoWorkers } from './preloadMonacoWorkers'
 import { computed, watch } from './reactivity'
 import { createRafScheduler } from './utils/raf'
 import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, setThemeRegisterPromise } from './utils/registerMonacoThemes'
-
 /**
  * useMonaco 组合式函数
  *
@@ -161,6 +160,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   let updateThrottleMs: number = (monacoOptions as any).updateThrottleMs ?? 50
   // 记录上次实际 flush 的时间戳（ms）及可能的延迟 timer
   let lastFlushTime = 0
+  let hasRecordedFlush = false
   let updateThrottleTimer: number | null = null
   // 合并同一帧内的多次 updateCode 调用，降低布局与 DOM 抖动
   let pendingUpdate: { code: string, lang: string } | null = null
@@ -189,6 +189,9 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         : (themes[1] as any).name),
   )
   let themeWatcher: WatchStopHandle | null = null
+  let asyncEpoch = 0
+  const captureAsyncEpoch = () => asyncEpoch
+  const isTokenCurrent = (token: unknown) => token === asyncEpoch
 
   // RAF scheduler (injectable time source possible via utils)
   const rafScheduler = createRafScheduler()
@@ -347,7 +350,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
             void setThemeInternal(t)
           }
         },
-        { flush: 'post', immediate: true },
+        {
+          flush: 'post',
+          immediate: true,
+          createGuardToken: captureAsyncEpoch,
+          guard: isTokenCurrent,
+        },
       )
     }
 
@@ -425,7 +433,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
             void setThemeInternal(t)
           }
         },
-        { flush: 'post', immediate: true },
+        {
+          flush: 'post',
+          immediate: true,
+          createGuardToken: captureAsyncEpoch,
+          guard: isTokenCurrent,
+        },
       )
     }
 
@@ -439,8 +452,29 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
 
   // onUnmounted(cleanupEditor)
 
+  function clearFallbackAsyncWork() {
+    rafScheduler.cancel('update')
+    rafScheduler.cancel('append')
+    rafScheduler.cancel('reveal')
+    pendingUpdate = null
+    hasRecordedFlush = false
+    lastFlushTime = Date.now()
+    appendBufferScheduled = false
+    appendBuffer.length = 0
+    if (revealDebounceId != null) {
+      clearTimeout(revealDebounceId)
+      revealDebounceId = null
+    }
+    if (updateThrottleTimer != null) {
+      clearTimeout(updateThrottleTimer as unknown as number)
+      updateThrottleTimer = null
+    }
+  }
+
   // Ensure cleanup stops the watcher
   function cleanupEditor() {
+    asyncEpoch += 1
+
     if (editorMgr) {
       editorMgr.cleanup()
       editorMgr = null
@@ -449,13 +483,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       diffMgr.cleanup()
       diffMgr = null
     }
-    // cancel rafs and pending updates
-    rafScheduler.cancel('update')
-    pendingUpdate = null
-    // cancel any pending append flushes and clear buffers for single editor
-    rafScheduler.cancel('append')
-    appendBufferScheduled = false
-    appendBuffer.length = 0
+    clearFallbackAsyncWork()
     // If an EditorManager was active it already disposed the editor instance.
     // Only dispose the module-level editorView when there is no editorMgr to avoid
     // double-dispose races (which can throw in some Monaco builds).
@@ -473,18 +501,14 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       themeWatcher = null
     }
 
-    // 清理可能由 updateCode 节流产生的延迟 timer
-    if (updateThrottleTimer != null) {
-      clearTimeout(updateThrottleTimer as unknown as number)
-      updateThrottleTimer = null
-    }
-
     // height managers are managed by the respective managers
 
     // Diff 相关释放由 diffMgr 处理，清空本地引用
     diffEditorView = null
     originalModel = null
     modifiedModel = null
+    _hasScrollBar = false
+    shouldAutoScroll = !!autoScrollInitial
   }
 
   // 将 updateCode 和 appendCode 提升为闭包内函数，便于相互调用且避免 this 绑定问题
@@ -576,6 +600,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       return
     // record flush time for throttling decisions
     lastFlushTime = Date.now()
+    hasRecordedFlush = true
     if (!editorView)
       return
     const model = editorView.getModel()
@@ -753,7 +778,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
           return
         }
         const now = Date.now()
-        const since = now - lastFlushTime
+        // Treat "no recorded flush" as infinite elapsed time so the first write runs immediately
+        const since = hasRecordedFlush ? (now - lastFlushTime) : Infinity
         if (since >= updateThrottleMs) {
           flushPendingUpdate()
           return
@@ -818,9 +844,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     createDiffEditor,
     cleanupEditor,
     safeClean() {
-      // cancel any pending rafs and pending payloads
-      rafScheduler.cancel('update')
-      pendingUpdate = null
+      clearFallbackAsyncWork()
       // diff raf queues are managed by diffMgr
 
       // 单编辑器由管理器处理临时清理

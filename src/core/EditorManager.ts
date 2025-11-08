@@ -7,6 +7,16 @@ import { createHeightManager } from '../utils/height'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
+const RAF_KINDS = [
+  'maybe-scroll',
+  'reveal',
+  'maybe-resume',
+  'content-size-change',
+  'sync-last-known',
+  'update',
+  'append',
+] as const
+
 export class EditorManager {
   private editorView: monaco.editor.IStandaloneCodeEditor | null = null
   private lastContainer: HTMLElement | null = null
@@ -55,6 +65,34 @@ export class EditorManager {
   private revealIdleTimerId: number | null = null
   private revealStrategyOption?: 'bottom' | 'centerIfOutside' | 'center'
   private revealBatchOnIdleMsOption?: number
+
+  private cancelRafs() {
+    for (const kind of RAF_KINDS)
+      this.rafScheduler.cancel(kind)
+  }
+
+  private clearRevealTimers() {
+    if (this.revealDebounceId != null) {
+      clearTimeout(this.revealDebounceId)
+      this.revealDebounceId = null
+    }
+    if (this.revealIdleTimerId != null) {
+      clearTimeout(this.revealIdleTimerId)
+      this.revealIdleTimerId = null
+    }
+  }
+
+  private resetAppendState() {
+    this.appendBufferScheduled = false
+    this.appendBuffer.length = 0
+  }
+
+  private clearAsyncWork() {
+    this.cancelRafs()
+    this.pendingUpdate = null
+    this.resetAppendState()
+    this.clearRevealTimers()
+  }
 
   constructor(
     private options: MonacoOptions,
@@ -462,13 +500,7 @@ export class EditorManager {
   }
 
   cleanup() {
-    this.rafScheduler.cancel('update')
-    this.rafScheduler.cancel('sync-last-known')
-    this.rafScheduler.cancel('content-size-change')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('append')
-    this.appendBufferScheduled = false
-    this.appendBuffer.length = 0
+    this.clearAsyncWork()
 
     if (this.editorView) {
       this.editorView.dispose()
@@ -487,20 +519,17 @@ export class EditorManager {
       this.editorHeightManager.dispose()
       this.editorHeightManager = null
     }
+    this._hasScrollBar = false
+    this.shouldAutoScroll = !!this.autoScrollInitial
+    this.lastScrollTop = 0
   }
 
   safeClean() {
-    this.rafScheduler.cancel('update')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('sync-last-known')
+    this.clearAsyncWork()
 
     if (this.scrollWatcher) {
       this.scrollWatcher.dispose()
       this.scrollWatcher = null
-    }
-    if (this.revealDebounceId != null) {
-      clearTimeout(this.revealDebounceId)
-      this.revealDebounceId = null
     }
 
     this._hasScrollBar = false
