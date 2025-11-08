@@ -595,18 +595,31 @@ export class DiffEditorManager {
     }
 
     // If we have buffered appends for the modified side that haven't been
-    // flushed yet, prefer the authoritative model value rather than the
-    // optimistic `lastKnownModifiedCode` which may already include unflushed
-    // suffixes. This avoids appending duplicate tails when we decide the
-    // new `modified` is an append of the previous content.
-    let prevM: string = this.lastKnownModifiedCode!
+    // flushed yet, drop them and resync from the model so we don't replay stale
+    // fragments after processing this authoritative update.
+    let prevM: string
     if (this.appendBufferDiff.length > 0) {
+      this.appendBufferDiff.length = 0
+      this.appendBufferDiffScheduled = false
+      this.rafScheduler.cancel('appendDiff')
       try {
         prevM = m.getValue()
         this.lastKnownModifiedCode = prevM
       }
       catch {
         prevM = this.lastKnownModifiedCode ?? ''
+      }
+    }
+    else if (this.lastKnownModifiedCode != null) {
+      prevM = this.lastKnownModifiedCode
+    }
+    else {
+      try {
+        prevM = m.getValue()
+        this.lastKnownModifiedCode = prevM
+      }
+      catch {
+        prevM = ''
       }
     }
     const prevMLineCount = m.getLineCount()

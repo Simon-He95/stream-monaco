@@ -354,15 +354,34 @@ export class EditorManager {
       return
     }
 
-    // If we have pending append buffer entries that haven't been flushed to the
-    // underlying model yet, prefer reading the authoritative model value rather
-    // than the optimistic `lastKnownCode` which may already include unflushed
-    // suffixes. Using the model avoids making append/minimal-edit decisions
-    // based on a state that hasn't been applied yet (which can cause
-    // duplicated tails).
-    const prevCode = (this.appendBuffer.length > 0)
-      ? this.editorView.getValue()
-      : (this.lastKnownCode ?? this.editorView.getValue())
+    let prevCode: string
+    if (this.appendBuffer.length > 0) {
+      // Drop the buffered appends and resync from the authoritative model so we
+      // don't replay stale data after applying this update. This preserves the
+      // per-frame batching model instead of forcing an immediate DOM write.
+      this.appendBuffer.length = 0
+      this.appendBufferScheduled = false
+      this.rafScheduler.cancel('append')
+      try {
+        prevCode = model.getValue()
+        this.lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = this.lastKnownCode ?? ''
+      }
+    }
+    else if (this.lastKnownCode != null) {
+      prevCode = this.lastKnownCode
+    }
+    else {
+      try {
+        prevCode = model.getValue()
+        this.lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = ''
+      }
+    }
     if (prevCode === newCode)
       return
 

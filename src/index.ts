@@ -614,18 +614,19 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     const processedCodeLanguage = processedLanguage(codeLanguage)
 
     // If there are pending append fragments buffered (not yet flushed to the
-    // model), prefer the authoritative model value instead of the optimistic
-    // `lastKnownCode`. Relying on `lastKnownCode` when the append buffer has
-    // unflushed data can lead to duplicated tails because `lastKnownCode` may
-    // already include the suffix while the model does not.
+    // model), drop them and resync from the authoritative model so we don't
+    // apply this update and then replay stale buffered text afterward.
     let prevCode: string | null = null
     if (appendBuffer.length > 0) {
+      appendBuffer.length = 0
+      appendBufferScheduled = false
+      rafScheduler.cancel('append')
       try {
         prevCode = model.getValue()
         lastKnownCode = prevCode
       }
       catch {
-        prevCode = ''
+        prevCode = lastKnownCode ?? ''
       }
     }
     else {
