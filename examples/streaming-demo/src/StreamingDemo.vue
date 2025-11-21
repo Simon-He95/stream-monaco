@@ -50,10 +50,10 @@ onMounted(async () => {
       return
     }
     // increase by a few chars per tick for visible streaming without being too slow
-    i += 100
+    i += 50
     contents = markdown.slice(0, Math.min(i, markdown.length))
     updateCode(contents, 'shellscript')
-  }, 4)
+  }, 40)
 })
 </script>
 

@@ -2,27 +2,28 @@ import nodeProcess from 'node:process'
 
 let seq = 0
 
-// Determine whether logging should be enabled. Priority:
+// Centralized debug determination. Priority:
 // 1. browser global `window.__STREAM_MONACO_DEBUG__` if defined
-// 2. process.env.NODE_ENV !== 'production' (when available)
-const ENABLED: boolean = (() => {
+// 2. process.env.NODE_ENV === 'production' disables debug when available
+// Default: enable debug during local development
+export const DEBUG: boolean = (() => {
   try {
     if (typeof window !== 'undefined' && (window as any).__STREAM_MONACO_DEBUG__ !== undefined)
       return Boolean((window as any).__STREAM_MONACO_DEBUG__)
     try {
       const proc = nodeProcess as any
-      if (proc && proc.env && proc.env.NODE_ENV !== 'production')
-        return true
+      if (proc && proc.env && proc.env.NODE_ENV === 'production')
+        return false
     }
     catch { }
   }
   catch { }
-  return false
+  return true
 })()
 
 export function log(tag: string, ...args: any[]) {
-  // if (!ENABLED)
-  //   return
+  if (!DEBUG)
+    return
   try {
     seq += 1
     const id = `#${seq}`
@@ -43,7 +44,7 @@ export function log(tag: string, ...args: any[]) {
 }
 
 export function error(tag: string, ...args: any[]) {
-  if (!ENABLED)
+  if (!DEBUG)
     return
   try {
     console.error(`[${tag}]`, ...args)

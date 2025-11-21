@@ -34,7 +34,7 @@ onMounted(async () => {
   let i = 0
   const combined = modified
   timer = setInterval(() => {
-    i += 10
+    i += 50
     if (i >= combined.length) {
       clearInterval(timer)
       return
@@ -42,7 +42,7 @@ onMounted(async () => {
     const next = combined.slice(0, i)
     const prevOriginal = original.slice(0, i)
     updateDiff(prevOriginal, next, 'typescript')
-  }, 40)
+  }, 400)
 })
 </script>
 

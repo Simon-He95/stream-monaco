@@ -351,11 +351,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       )
     }
 
-    try {
-      if (editorView)
-        lastKnownCode = editorView.getValue()
-    }
-    catch { }
+    if (editorView)
+      lastKnownCode = editorView.getValue()
 
     return editorView
   }

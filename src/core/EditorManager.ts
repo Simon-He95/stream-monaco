@@ -121,10 +121,8 @@ export class EditorManager {
     const lineCount = this.cachedLineCount ?? editorView.getModel()?.getLineCount() ?? 1
     const lineHeight = editorView.getOption(monaco.editor.EditorOption.lineHeight)
     const height = Math.min(lineCount * lineHeight + padding, this.maxHeightValue)
-    try {
-      log('EditorManager.computedHeight', { lineCount, lineHeight, computed: height, maxHeightValue: this.maxHeightValue })
-    }
-    catch { }
+    // log is defensive itself; no need for an extra try/catch here
+    log('EditorManager.computedHeight', { lineCount, lineHeight, computed: height, maxHeightValue: this.maxHeightValue })
     return height
   }
 
@@ -185,7 +183,6 @@ export class EditorManager {
         return
       }
       this.dlog('performReveal executing, ticket=', ticket, 'line=', line)
-      this.lastPerformedRevealTicket = ticket
       const strategy = this.revealStrategyOption ?? this.options.revealStrategy ?? 'centerIfOutside'
       this.dlog('performReveal strategy=', strategy)
       const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
@@ -231,7 +228,6 @@ export class EditorManager {
         this.dlog('performImmediateReveal skipped, stale ticket', ticket, 'current', this.revealTicket)
         return
       }
-      this.lastPerformedRevealTicket = ticket
       // Prefer an immediate (non-animated) reveal here to avoid visual
       // jitter caused by smooth scroll animations. Some Monaco builds expose
       // a ScrollType with Immediate; otherwise calling revealLine without
@@ -441,42 +437,31 @@ export class EditorManager {
   private syncLastKnownCode() {
     if (!this.editorView || !this.lastKnownCodeDirty)
       return
-    try {
-      const model = this.editorView.getModel()
-      if (model) {
-        this.lastKnownCode = model.getValue()
-        this.cachedLineCount = model.getLineCount() ?? this.cachedLineCount
-      }
+    const model = this.editorView.getModel()
+    if (model) {
+      this.lastKnownCode = model.getValue()
+      this.cachedLineCount = model.getLineCount() ?? this.cachedLineCount
     }
-    catch { }
-    finally {
-      this.lastKnownCodeDirty = false
-    }
+    this.lastKnownCodeDirty = false
   }
 
   private suppressScrollWatcher(ms: number) {
-    try {
-      if (!this.scrollWatcher || typeof this.scrollWatcher.setSuppressed !== 'function')
-        return
-      this.dlog('suppressScrollWatcher', ms)
-      // clear existing timer
-      if (this.scrollWatcherSuppressionTimer != null) {
-        clearTimeout(this.scrollWatcherSuppressionTimer)
-        this.scrollWatcherSuppressionTimer = null
-      }
-      this.scrollWatcher.setSuppressed(true)
-      this.scrollWatcherSuppressionTimer = (setTimeout(() => {
-        try {
-          if (this.scrollWatcher && typeof this.scrollWatcher.setSuppressed === 'function') {
-            this.scrollWatcher.setSuppressed(false)
-            this.dlog('suppressScrollWatcher cleared')
-          }
-        }
-        catch { }
-        this.scrollWatcherSuppressionTimer = null
-      }, ms) as unknown) as number
+    if (!this.scrollWatcher || typeof this.scrollWatcher.setSuppressed !== 'function')
+      return
+    this.dlog('suppressScrollWatcher', ms)
+    // clear existing timer
+    if (this.scrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.scrollWatcherSuppressionTimer)
+      this.scrollWatcherSuppressionTimer = null
     }
-    catch { }
+    this.scrollWatcher.setSuppressed(true)
+    this.scrollWatcherSuppressionTimer = (setTimeout(() => {
+      if (this.scrollWatcher && typeof this.scrollWatcher.setSuppressed === 'function') {
+        this.scrollWatcher.setSuppressed(false)
+        this.dlog('suppressScrollWatcher cleared')
+      }
+      this.scrollWatcherSuppressionTimer = null
+    }, ms) as unknown) as number
   }
 
   // Schedule an immediate reveal after layout has settled (two RAFs).
@@ -566,27 +551,10 @@ export class EditorManager {
           this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
         // If we jumped to the max height, apply it immediately so the
         // scroller appears consistently while content streams.
-        try {
-          const computed = this.computedHeight(this.editorView)
-          if (computed >= this.maxHeightValue - 1 && this.lastContainer)
-            this.lastContainer.style.height = `${this.maxHeightValue}px`
-        }
-        catch { }
-        if (shouldImmediate) {
-          try {
-            this.forceReveal(newLineCount)
-          }
-          catch { }
-          // don't schedule another reveal — we've already revealed synchronously
-        }
-        else {
-          // Schedule an immediate reveal on the next RAF frame to allow the
-          // editor to apply layout changes first; use rafScheduler to avoid
-          // forcing synchronous layout here. If we schedule an immediate
-          // reveal, skip scheduling the debounced `maybeScrollToBottom` to
-          // avoid competing reveal calls that can cause jumps.
-          this.maybeScrollToBottom(newLineCount)
-        }
+        const computed = this.computedHeight(this.editorView)
+        if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+          this.lastContainer.style.height = `${this.maxHeightValue}px`
+        this.forceReveal(newLineCount)
       }
       return
     }
@@ -658,24 +626,21 @@ export class EditorManager {
       return
     // Avoid expensive minimal edit calculation for extremely large documents
     // or when the size delta is very large; fallback to full setValue.
-    try {
-      const maxChars = minimalEditMaxChars
-      const ratio = minimalEditMaxChangeRatio
-      const maxLen = Math.max(prev.length, next.length)
-      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
-      if (prev.length + next.length > maxChars || changeRatio > ratio) {
-        const prevLineCount = model.getLineCount()
-        model.setValue(next)
-        this.lastKnownCode = next
-        const newLineCount = model.getLineCount()
-        this.cachedLineCount = newLineCount
-        if (newLineCount !== prevLineCount) {
-          this.maybeScrollToBottom(newLineCount)
-        }
-        return
+    const maxChars = minimalEditMaxChars
+    const ratio = minimalEditMaxChangeRatio
+    const maxLen = Math.max(prev.length, next.length)
+    const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+    if (prev.length + next.length > maxChars || changeRatio > ratio) {
+      const prevLineCount = model.getLineCount()
+      model.setValue(next)
+      this.lastKnownCode = next
+      const newLineCount = model.getLineCount()
+      this.cachedLineCount = newLineCount
+      if (newLineCount !== prevLineCount) {
+        this.maybeScrollToBottom(newLineCount)
       }
+      return
     }
-    catch { }
 
     const res = computeMinimalEdit(prev, next)
     if (!res)
@@ -729,12 +694,9 @@ export class EditorManager {
       // When appends push the computed height to the max, apply the max
       // immediately so the editor doesn't show an intermediate scrollbar
       // before the debounced height manager settles.
-      try {
-        const computed = this.computedHeight(this.editorView)
-        if (computed >= this.maxHeightValue - 1 && this.lastContainer)
-          this.lastContainer.style.height = `${this.maxHeightValue}px`
-      }
-      catch { }
+      const computed = this.computedHeight(this.editorView)
+      if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+        this.lastContainer.style.height = `${this.maxHeightValue}px`
       if (shouldImmediate) {
         try {
           this.forceReveal(newLineCount)
