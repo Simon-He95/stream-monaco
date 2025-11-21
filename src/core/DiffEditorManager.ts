@@ -4,6 +4,7 @@ import { defaultRevealBatchOnIdleMs, defaultRevealDebounceMs, defaultScrollbar, 
 import { computeMinimalEdit } from '../minimalEdit'
 import * as monaco from '../monaco-shim'
 import { createHeightManager } from '../utils/height'
+import { log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
@@ -47,6 +48,8 @@ export class DiffEditorManager {
 
   // track last revealed line to dedupe repeated reveals (prevent jitter)
   private lastRevealLineDiff: number | null = null
+  // track last performed reveal ticket to dedupe/stale-check reveals
+  private revealTicketDiff = 0
   // debounce id for reveal to coalesce rapid calls (ms)
   private revealDebounceIdDiff: number | null = null
   private readonly revealDebounceMs = defaultRevealDebounceMs
@@ -54,6 +57,8 @@ export class DiffEditorManager {
   private revealIdleTimerIdDiff: number | null = null
   private revealStrategyOption?: 'bottom' | 'centerIfOutside' | 'center'
   private revealBatchOnIdleMsOption?: number
+  private readonly scrollWatcherSuppressionMs = 500
+  private diffScrollWatcherSuppressionTimer: number | null = null
 
   private appendBufferDiff: string[] = []
   private appendBufferDiffScheduled = false
@@ -89,6 +94,32 @@ export class DiffEditorManager {
     return Math.min(desired, this.maxHeightValue)
   }
 
+  private isOverflowAutoDiff() {
+    return !!this.lastContainer && this.lastContainer.style.overflow === 'auto'
+  }
+
+  private shouldPerformImmediateRevealDiff() {
+    return this.autoScrollOnUpdate && this.shouldAutoScrollDiff && this.hasVerticalScrollbarModified() && this.isOverflowAutoDiff()
+  }
+
+  private suppressScrollWatcherDiff(ms: number) {
+    if (!this.diffScrollWatcher || typeof (this.diffScrollWatcher as any).setSuppressed !== 'function')
+      return
+    // clear existing timer
+    if (this.diffScrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.diffScrollWatcherSuppressionTimer)
+      this.diffScrollWatcherSuppressionTimer = null
+    }
+    ; (this.diffScrollWatcher as any).setSuppressed(true)
+    this.diffScrollWatcherSuppressionTimer = (setTimeout(() => {
+      try {
+        ; (this.diffScrollWatcher as any).setSuppressed(false)
+      }
+      catch { }
+      this.diffScrollWatcherSuppressionTimer = null
+    }, ms) as unknown) as number
+  }
+
   private hasVerticalScrollbarModified(): boolean {
     if (!this.diffEditorView)
       return false
@@ -116,9 +147,12 @@ export class DiffEditorManager {
   private maybeScrollDiffToBottom(targetLine?: number, prevLineOverride?: number) {
     // Defer measurement and reveal work to RAF to avoid forcing sync layout during hot paths
     this.rafScheduler.schedule('maybe-scroll-diff', () => {
+      log('diff', 'maybeScrollDiffToBottom called', { targetLine, prevLineOverride, diffAutoScroll: this.diffAutoScroll, autoScrollOnUpdate: this.autoScrollOnUpdate, shouldAutoScrollDiff: this.shouldAutoScrollDiff })
       if (!this.diffEditorView)
         return
-      if (!(this.diffAutoScroll && this.autoScrollOnUpdate && this.shouldAutoScrollDiff && this.hasVerticalScrollbarModified()))
+      const hasV = this.hasVerticalScrollbarModified()
+      log('diff', 'hasVerticalScrollbarModified ->', hasV)
+      if (!(this.diffAutoScroll && this.autoScrollOnUpdate && this.shouldAutoScrollDiff && hasV))
         return
       const me = this.diffEditorView.getModifiedEditor()
       const model = me.getModel()
@@ -128,6 +162,7 @@ export class DiffEditorManager {
       const prevLine = (typeof prevLineOverride === 'number')
         ? prevLineOverride
         : (this.lastKnownModifiedLineCount ?? -1)
+      log('diff', 'scroll metrics', { prevLine, currentLine, line, lastRevealLineDiff: this.lastRevealLineDiff })
       if (prevLine !== -1 && prevLine === currentLine && line === currentLine)
         return
 
@@ -135,13 +170,25 @@ export class DiffEditorManager {
         return
 
       const batchMs = this.revealBatchOnIdleMsOption ?? this.options.revealBatchOnIdleMs ?? defaultRevealBatchOnIdleMs
+      log('diff', 'reveal timing', { batchMs, revealDebounceMs: this.revealDebounceMs, revealDebounceMsOption: this.revealDebounceMsOption })
       if (typeof batchMs === 'number' && batchMs > 0) {
+        // If a vertical scrollbar is present, don't wait for the idle batch
+        // timer — reveal immediately (ticketed) so continuous streaming
+        // keeps the viewport following new content.
+        if (hasV) {
+          const ticket = ++this.revealTicketDiff
+          log('diff', 'has scrollbar -> immediate ticketed reveal', { ticket, line })
+          this.performRevealDiffTicketed(line, ticket)
+          return
+        }
         if (this.revealIdleTimerIdDiff != null) {
           clearTimeout(this.revealIdleTimerIdDiff)
         }
+        const ticket = ++this.revealTicketDiff
+        log('diff', 'scheduling idle reveal', { ticket, batchMs, line })
         this.revealIdleTimerIdDiff = (setTimeout(() => {
           this.revealIdleTimerIdDiff = null
-          this.performRevealDiff(line)
+          this.performRevealDiffTicketed(line, ticket)
         }, batchMs) as unknown) as number
         return
       }
@@ -157,15 +204,25 @@ export class DiffEditorManager {
             : this.revealDebounceMs
       this.revealDebounceIdDiff = (setTimeout(() => {
         this.revealDebounceIdDiff = null
-        this.performRevealDiff(line)
+        const ticket = ++this.revealTicketDiff
+        log('diff', 'debounced reveal firing', { ticket, line })
+        this.performRevealDiffTicketed(line, ticket)
       }, ms) as unknown) as number
 
       this.lastKnownModifiedLineCount = currentLine
     })
   }
 
-  private performRevealDiff(line: number) {
+  private performRevealDiffTicketed(line: number, ticket: number) {
     this.rafScheduler.schedule('revealDiff', () => {
+      // Temporarily suppress scroll watcher to avoid misinterpreting programmatic scroll
+      if (this.diffScrollWatcher) {
+        log('diff', 'performRevealDiffTicketed - suppressing watcher', { ticket, line, ms: this.scrollWatcherSuppressionMs })
+        this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs)
+      }
+      if (ticket !== this.revealTicketDiff)
+        return
+      log('diff', 'performRevealDiffTicketed - performing reveal', { ticket, line })
       const strategy = this.revealStrategyOption ?? this.options.revealStrategy ?? 'centerIfOutside'
       const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
       const smooth = (ScrollType && typeof ScrollType.Smooth !== 'undefined') ? ScrollType.Smooth : undefined
@@ -194,6 +251,69 @@ export class DiffEditorManager {
         catch { }
       }
       this.lastRevealLineDiff = line
+      log('diff', 'performRevealDiffTicketed - revealed', { line, lastRevealLineDiff: this.lastRevealLineDiff })
+      try {
+        this.shouldAutoScrollDiff = true
+        this.lastScrollTopDiff = this.diffEditorView?.getModifiedEditor().getScrollTop?.() ?? this.lastScrollTopDiff
+      }
+      catch { }
+    })
+  }
+
+  private performImmediateRevealDiff(line: number, ticket: number) {
+    if (!this.diffEditorView)
+      return
+    if (ticket !== this.revealTicketDiff)
+      return
+    const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+    const immediate = (ScrollType && typeof ScrollType.Immediate !== 'undefined') ? ScrollType.Immediate : undefined
+    const me = this.diffEditorView.getModifiedEditor()
+    if (typeof immediate !== 'undefined')
+      me.revealLine(line, immediate)
+    else me.revealLine(line)
+    this.measureViewportDiff()
+    log('diff', 'performImmediateRevealDiff', { line, ticket })
+    try {
+      this.shouldAutoScrollDiff = true
+      this.lastScrollTopDiff = this.diffEditorView?.getModifiedEditor().getScrollTop?.() ?? this.lastScrollTopDiff
+    }
+    catch { }
+  }
+
+  private scheduleImmediateRevealAfterLayoutDiff(line: number) {
+    const ticket = ++this.revealTicketDiff
+    this.rafScheduler.schedule('immediate-reveal-diff', async () => {
+      const target = this.diffEditorView && this.diffHeightManager
+        ? Math.min(this.computedHeight(), this.maxHeightValue)
+        : -1
+      if (target !== -1 && this.diffHeightManager) {
+        if (this.lastContainer)
+          this.lastContainer.style.height = `${target}px`
+        await this.waitForHeightAppliedDiff(target)
+      }
+      else {
+        // nothing
+      }
+      this.performImmediateRevealDiff(line, ticket)
+    })
+  }
+
+  private waitForHeightAppliedDiff(target: number, timeoutMs = 500) {
+    return new Promise<void>((resolve) => {
+      const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+      const check = () => {
+        const applied = this.lastContainer ? (Number.parseFloat((this.lastContainer.style.height || '').replace('px', '')) || 0) : -1
+        if (applied >= target - 1) {
+          resolve()
+          return
+        }
+        if (((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - start > timeoutMs) {
+          resolve()
+          return
+        }
+        requestAnimationFrame(check)
+      }
+      check()
     })
   }
 
@@ -207,7 +327,10 @@ export class DiffEditorManager {
     this.cleanup()
     this.lastContainer = container
 
-    container.style.overflow = 'auto'
+    // Start with hidden overflow so we don't show a scrollbar before the
+    // editor reaches its configured max height. We'll toggle to `auto`
+    // when the computed height reaches `maxHeightValue`.
+    container.style.overflow = 'hidden'
     container.style.maxHeight = this.maxHeightCSS
 
     const lang = processedLanguage(language) || language
@@ -254,8 +377,13 @@ export class DiffEditorManager {
         setLast: (v: number) => { this.lastScrollTopDiff = v },
       })
     }
+    log('diff', 'createDiffEditor', { autoScrollInitial: this.autoScrollInitial, diffAutoScroll: this.diffAutoScroll })
 
-    this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), this.lastKnownModifiedLineCount ?? undefined)
+    // Compute and apply the editor's height (with internal hysteresis to
+    // avoid tiny changes). Provide a small minimum visible height so the
+    // editor doesn't collapse to a single line while content is streaming.
+    const MIN_VISIBLE_HEIGHT = Math.min(120, this.maxHeightValue)
+    container.style.minHeight = `${MIN_VISIBLE_HEIGHT}px`
 
     if (this.diffHeightManager) {
       this.diffHeightManager.dispose()
@@ -263,6 +391,15 @@ export class DiffEditorManager {
     }
     this.diffHeightManager = createHeightManager(container, () => this.computedHeight())
     this.diffHeightManager.update()
+
+    // If the initial computed height already reaches (or is very near) the
+    // configured max height, apply it immediately so the UI shows the
+    // scrolled state without waiting for the debounced height manager.
+    const initialComputed = this.computedHeight()
+    if (initialComputed >= this.maxHeightValue - 1) {
+      container.style.height = `${this.maxHeightValue}px`
+      container.style.overflow = 'auto'
+    }
 
     const me = this.diffEditorView.getModifiedEditor()
     this.cachedScrollHeightDiff = me.getScrollHeight?.() ?? null
@@ -274,29 +411,47 @@ export class DiffEditorManager {
     oEditor.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
       this.rafScheduler.schedule('content-size-change-diff', () => {
-        try {
-          this.cachedScrollHeightDiff = oEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
-          this.cachedLineHeightDiff = oEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
-          this.cachedComputedHeightDiff = this.computedHeight()
-          if (this.diffHeightManager?.isSuppressed())
-            return
-          this.diffHeightManager?.update()
+        this.cachedScrollHeightDiff = oEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
+        this.cachedLineHeightDiff = oEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
+        this.cachedComputedHeightDiff = this.computedHeight()
+        if (this.diffHeightManager?.isSuppressed())
+          return
+        this.diffHeightManager?.update()
+        // Toggle overflow based on whether we've effectively reached max height.
+        const computed = this.computedHeight()
+        if (this.lastContainer) {
+          const prevOverflow = this.lastContainer.style.overflow
+          const newOverflow = computed >= this.maxHeightValue - 1 ? 'auto' : 'hidden'
+          if (prevOverflow !== newOverflow) {
+            this.lastContainer.style.overflow = newOverflow
+            if (newOverflow === 'auto' && this.shouldAutoScrollDiff) {
+              this.maybeScrollDiffToBottom(this.modifiedModel?.getLineCount())
+            }
+          }
         }
-        catch { }
       })
     })
     mEditor.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
       this.rafScheduler.schedule('content-size-change-diff', () => {
-        try {
-          this.cachedScrollHeightDiff = mEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
-          this.cachedLineHeightDiff = mEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
-          this.cachedComputedHeightDiff = this.computedHeight()
-          if (this.diffHeightManager?.isSuppressed())
-            return
-          this.diffHeightManager?.update()
+        this.cachedScrollHeightDiff = mEditor.getScrollHeight?.() ?? this.cachedScrollHeightDiff
+        this.cachedLineHeightDiff = mEditor.getOption?.(monaco.editor.EditorOption.lineHeight) ?? this.cachedLineHeightDiff
+        this.cachedComputedHeightDiff = this.computedHeight()
+        if (this.diffHeightManager?.isSuppressed())
+          return
+        this.diffHeightManager?.update()
+        // Toggle overflow based on whether we've effectively reached max height.
+        const computed = this.computedHeight()
+        if (this.lastContainer) {
+          const prevOverflow = this.lastContainer.style.overflow
+          const newOverflow = computed >= this.maxHeightValue - 1 ? 'auto' : 'hidden'
+          if (prevOverflow !== newOverflow) {
+            this.lastContainer.style.overflow = newOverflow
+            if (newOverflow === 'auto' && this.shouldAutoScrollDiff) {
+              this.maybeScrollDiffToBottom(this.modifiedModel?.getLineCount())
+            }
+          }
         }
-        catch { }
       })
     })
 
@@ -305,6 +460,8 @@ export class DiffEditorManager {
       this.lastKnownModifiedDirty = true
       this.rafScheduler.schedule('sync-last-known-modified', () => this.syncLastKnownModified())
     })
+
+    this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), this.lastKnownModifiedLineCount ?? undefined)
 
     return this.diffEditorView
   }
@@ -383,13 +540,50 @@ export class DiffEditorManager {
     const prev = this.lastKnownModifiedCode ?? this.modifiedModel.getValue()
     if (prev === newCode)
       return
+    const prevLine = this.modifiedModel.getLineCount()
     if (newCode.startsWith(prev) && prev.length < newCode.length) {
-      const prevLine = this.modifiedModel.getLineCount()
       this.appendToModel(this.modifiedModel, newCode.slice(prev.length))
       this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), prevLine)
     }
     else {
       this.applyMinimalEditToModel(this.modifiedModel, prev, newCode)
+      const newLine = this.modifiedModel.getLineCount()
+      if (newLine !== prevLine) {
+        const shouldImmediate = this.shouldPerformImmediateRevealDiff()
+        if (shouldImmediate)
+          this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
+        const computed = this.computedHeight()
+        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+          this.lastContainer.style.height = `${this.maxHeightValue}px`
+          this.lastContainer.style.overflow = 'auto'
+        }
+        if (shouldImmediate) {
+          this.scheduleImmediateRevealAfterLayoutDiff(newLine)
+        }
+        else {
+          this.maybeScrollDiffToBottom(newLine, prevLine)
+        }
+        // If auto-scroll is enabled, also perform an unconditional immediate
+        // reveal of the current tail line so the diff view follows content
+        // progressively even when container overflow/scrollbar state hasn't
+        // flipped yet.
+        if (this.autoScrollOnUpdate && this.shouldAutoScrollDiff) {
+          try {
+            const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+            const immediate = (ScrollType && typeof ScrollType.Immediate !== 'undefined') ? ScrollType.Immediate : undefined
+            const me2 = this.diffEditorView!.getModifiedEditor()
+            const targetLine = me2.getModel()?.getLineCount() ?? newLine
+            if (typeof immediate !== 'undefined')
+              me2.revealLine(targetLine, immediate)
+            else
+              me2.revealLine(targetLine)
+            this.lastRevealLineDiff = targetLine
+            this.shouldAutoScrollDiff = true
+            this.lastScrollTopDiff = me2.getScrollTop?.() ?? this.lastScrollTopDiff
+          }
+          catch { }
+        }
+      }
     }
     this.lastKnownModifiedCode = newCode
   }
@@ -403,10 +597,7 @@ export class DiffEditorManager {
         monaco.editor.setModelLanguage(this.originalModel, lang)
     }
     this.appendToModel(this.originalModel, appendText)
-    try {
-      this.lastKnownOriginalCode = this.originalModel.getValue()
-    }
-    catch { }
+    this.lastKnownOriginalCode = this.originalModel.getValue()
   }
 
   appendModified(appendText: string, codeLanguage?: string) {
@@ -487,6 +678,15 @@ export class DiffEditorManager {
       clearTimeout(this.revealDebounceIdDiff)
       this.revealDebounceIdDiff = null
     }
+    if (this.revealIdleTimerIdDiff != null) {
+      clearTimeout(this.revealIdleTimerIdDiff)
+      this.revealIdleTimerIdDiff = null
+    }
+    if (this.diffScrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.diffScrollWatcherSuppressionTimer)
+      this.diffScrollWatcherSuppressionTimer = null
+    }
+    this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
   }
 
@@ -511,6 +711,15 @@ export class DiffEditorManager {
       clearTimeout(this.revealDebounceIdDiff)
       this.revealDebounceIdDiff = null
     }
+    if (this.revealIdleTimerIdDiff != null) {
+      clearTimeout(this.revealIdleTimerIdDiff)
+      this.revealIdleTimerIdDiff = null
+    }
+    if (this.diffScrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.diffScrollWatcherSuppressionTimer)
+      this.diffScrollWatcherSuppressionTimer = null
+    }
+    this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.rafScheduler.cancel('content-size-change-diff')
     this.rafScheduler.cancel('sync-last-known-modified')
@@ -527,7 +736,6 @@ export class DiffEditorManager {
         this.lastKnownModifiedLineCount = model.getLineCount()
       }
     }
-    catch { }
     finally {
       this.lastKnownModifiedDirty = false
     }
@@ -598,12 +806,25 @@ export class DiffEditorManager {
       this.lastKnownModifiedCode = modified
       const newMLineCount = m.getLineCount()
       if (newMLineCount !== prevMLineCount) {
-        this.maybeScrollDiffToBottom(newMLineCount, prevMLineCount)
+        const shouldImmediate = this.shouldPerformImmediateRevealDiff()
+        if (shouldImmediate)
+          this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
+        const computed = this.computedHeight()
+        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+          this.lastContainer.style.height = `${this.maxHeightValue}px`
+          this.lastContainer.style.overflow = 'auto'
+        }
+        if (shouldImmediate) {
+          this.scheduleImmediateRevealAfterLayoutDiff(newMLineCount)
+        }
+        else {
+          this.maybeScrollDiffToBottom(newMLineCount, prevMLineCount)
+        }
       }
     }
   }
 
-  private flushAppendBufferDiff() {
+  private async flushAppendBufferDiff() {
     if (!this.diffEditorView)
       return
     if (this.appendBufferDiff.length === 0)
@@ -615,47 +836,161 @@ export class DiffEditorManager {
       this.appendBufferDiff.length = 0
       return
     }
-    const text = this.appendBufferDiff.join('')
-    this.appendBufferDiff.length = 0
-    try {
-      const prevLine = model.getLineCount()
-      const lastColumn = model.getLineMaxColumn(prevLine)
-      const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
-      model.applyEdits([{ range, text, forceMoveMarkers: true }])
-      // update lastKnownModifiedCode lazily based on model value to avoid drift
+    let parts = this.appendBufferDiff.splice(0)
+    // If the buffered append is large, apply it in smaller sequential chunks
+    // with a RAF pause between each so the editor can render and auto-scroll
+    // progressively instead of jumping once all data is applied.
+    const prevLineInit = model.getLineCount()
+    const totalText = parts.join('')
+    const totalChars = totalText.length
+    // If we received a single very large chunk, split it by lines into smaller
+    // chunks so the editor can render and scroll progressively.
+    if (parts.length === 1 && totalChars > 5000) {
+      const lines = totalText.split(/\r?\n/)
+      const chunkSize = 200
+      const chunks: string[] = []
+      for (let i = 0; i < lines.length; i += chunkSize) {
+        chunks.push(`${lines.slice(i, i + chunkSize).join('\n')}\n`)
+      }
+      if (chunks.length > 1) {
+        parts = chunks
+      }
+    }
+    const applyChunked = parts.length > 1 && (totalChars > 2000 || (model.getLineCount && (model.getLineCount() + 0) - prevLineInit > 50))
+    log('diff', 'flushAppendBufferDiff start', { partsCount: parts.length, totalChars, applyChunked })
+    let prevLine = prevLineInit
+
+    // If we have a scroll watcher, explicitly suppress it for the duration
+    // of this flush so its onPause/onMaybeResume logic doesn't flip
+    // auto-scroll while we're programmatically applying edits.
+    const watcherApi = this.diffScrollWatcher as any
+    let suppressedByFlush = false
+    if (watcherApi && typeof watcherApi.setSuppressed === 'function') {
       try {
-        this.lastKnownModifiedCode = model.getValue()
+        // clear any timer-based suppression we may have pending
+        if (this.diffScrollWatcherSuppressionTimer != null) {
+          clearTimeout(this.diffScrollWatcherSuppressionTimer)
+          this.diffScrollWatcherSuppressionTimer = null
+        }
+        watcherApi.setSuppressed(true)
+        suppressedByFlush = true
       }
       catch { }
+    }
 
-      const newLine = model.getLineCount()
+    if (applyChunked) {
+      log('diff', 'flushAppendBufferDiff applying chunked', { partsLen: parts.length })
+      let idx = 0
+      for (const part of parts) {
+        if (!part)
+          continue
+        idx += 1
+        log('diff', 'flushAppendBufferDiff chunk', { idx, partLen: part.length, prevLine })
+        const lastColumn = model.getLineMaxColumn(prevLine)
+        const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
+        model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
+        // update lastKnownModifiedCode lazily based on model value to avoid drift
+        this.lastKnownModifiedCode = model.getValue()
+        const newLine = model.getLineCount()
+        this.lastKnownModifiedLineCount = newLine
+        // try to let the editor update layout before scheduling reveal/scroll
+        await new Promise(resolve => (typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame(resolve) : setTimeout(resolve, 0)))
+        const shouldImmediate = this.shouldPerformImmediateRevealDiff()
+        log('diff', 'flushAppendBufferDiff chunk metrics', { idx, newLine, prevLine, shouldImmediate })
+        if (shouldImmediate)
+          this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
+        const computed = this.computedHeight()
+        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+          this.lastContainer.style.height = `${this.maxHeightValue}px`
+          this.lastContainer.style.overflow = 'auto'
+        }
+        if (shouldImmediate) {
+          this.scheduleImmediateRevealAfterLayoutDiff(newLine)
+        }
+        else {
+          this.maybeScrollDiffToBottom(newLine, prevLine)
+        }
+        prevLine = newLine
+        log('diff', 'flushAppendBufferDiff chunk applied', { idx, newLine })
+      }
+      // restore suppression state
+      if (suppressedByFlush) {
+        watcherApi.setSuppressed(false)
+      }
+      return
+    }
+
+    const text = totalText
+    this.appendBufferDiff.length = 0
+    prevLine = model.getLineCount()
+    const lastColumn = model.getLineMaxColumn(prevLine)
+    const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
+    model.applyEdits([{ range, text, forceMoveMarkers: true }])
+    // update lastKnownModifiedCode lazily based on model value to avoid drift
+    this.lastKnownModifiedCode = model.getValue()
+
+    const newLine = model.getLineCount()
+    // keep internal line count cache in sync
+    this.lastKnownModifiedLineCount = newLine
+    const shouldImmediate = this.shouldPerformImmediateRevealDiff()
+    if (shouldImmediate)
+      this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
+    // When appends push the computed height to the max, apply the max
+    // immediately so the editor doesn't show an intermediate scrollbar
+    // before the debounced height manager settles.
+    const computed = this.computedHeight()
+    if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+      this.lastContainer.style.height = `${this.maxHeightValue}px`
+    if (shouldImmediate) {
+      this.scheduleImmediateRevealAfterLayoutDiff(newLine)
+    }
+    else {
       // schedule a short RAF task to allow the editor to update layout/scroll heights
       // before we check for vertical scrollbar and potentially auto-scroll.
       this.maybeScrollDiffToBottom(newLine, prevLine)
-      // keep internal line count cache in sync
-      this.lastKnownModifiedLineCount = newLine
+    }
+    // If auto-scroll is enabled, also perform an unconditional immediate reveal
+    // here so the diff follows large single-appends even when scrollbar/overflow
+    // state hasn't been toggled yet.
+    if (this.autoScrollOnUpdate && this.shouldAutoScrollDiff) {
+      try {
+        const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+        const immediate = (ScrollType && typeof ScrollType.Immediate !== 'undefined') ? ScrollType.Immediate : undefined
+        const me2 = this.diffEditorView!.getModifiedEditor()
+        const targetLine = me2.getModel()?.getLineCount() ?? newLine
+        if (typeof immediate !== 'undefined')
+          me2.revealLine(targetLine, immediate)
+        else
+          me2.revealLine(targetLine)
+        this.lastRevealLineDiff = targetLine
+        this.shouldAutoScrollDiff = true
+        this.lastScrollTopDiff = me2.getScrollTop?.() ?? this.lastScrollTopDiff
+      }
+      catch { }
+    }
+    // restore suppression state and ensure auto-scroll remains enabled
+    if (suppressedByFlush) {
+      watcherApi.setSuppressed(false)
+    }
+    try {
+      this.shouldAutoScrollDiff = true
+      this.lastScrollTopDiff = this.diffEditorView?.getModifiedEditor().getScrollTop?.() ?? this.lastScrollTopDiff
     }
     catch { }
   }
 
   private applyMinimalEditToModel(model: monaco.editor.ITextModel, prev: string, next: string) {
-    try {
-      const maxChars = minimalEditMaxChars
-      const ratio = minimalEditMaxChangeRatio
-      const maxLen = Math.max(prev.length, next.length)
-      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
-      if (prev.length + next.length > maxChars || changeRatio > ratio) {
-        model.setValue(next)
-        try {
-          if (model === this.modifiedModel) {
-            this.lastKnownModifiedLineCount = model.getLineCount()
-          }
-        }
-        catch { }
-        return
+    const maxChars = minimalEditMaxChars
+    const ratio = minimalEditMaxChangeRatio
+    const maxLen = Math.max(prev.length, next.length)
+    const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+    if (prev.length + next.length > maxChars || changeRatio > ratio) {
+      model.setValue(next)
+      if (model === this.modifiedModel) {
+        this.lastKnownModifiedLineCount = model.getLineCount()
       }
+      return
     }
-    catch { }
 
     const res = computeMinimalEdit(prev, next)
     if (!res)
@@ -670,12 +1005,9 @@ export class DiffEditorManager {
       rangeEnd.column,
     )
     model.applyEdits([{ range, text: replaceText, forceMoveMarkers: true }])
-    try {
-      if (model === this.modifiedModel) {
-        this.lastKnownModifiedLineCount = model.getLineCount()
-      }
+    if (model === this.modifiedModel) {
+      this.lastKnownModifiedLineCount = model.getLineCount()
     }
-    catch { }
   }
 
   private appendToModel(model: monaco.editor.ITextModel, appendText: string) {
@@ -685,11 +1017,8 @@ export class DiffEditorManager {
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
     model.applyEdits([{ range, text: appendText, forceMoveMarkers: true }])
-    try {
-      if (model === this.modifiedModel) {
-        this.lastKnownModifiedLineCount = model.getLineCount()
-      }
+    if (model === this.modifiedModel) {
+      this.lastKnownModifiedLineCount = model.getLineCount()
     }
-    catch { }
   }
 }

@@ -21,8 +21,8 @@ const ENABLED: boolean = (() => {
 })()
 
 export function log(tag: string, ...args: any[]) {
-  if (!ENABLED)
-    return
+  // if (!ENABLED)
+  //   return
   try {
     seq += 1
     const id = `#${seq}`
