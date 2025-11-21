@@ -1,17 +1,11 @@
-import nodeProcess from 'node:process'
-
 let seq = 0
 
 // Centralized debug determination. Priority:
 // 1. browser global `window.__STREAM_MONACO_DEBUG__` if defined
-// 2. process.env.NODE_ENV === 'production' disables debug when available
 // Default: enable debug during local development
 export const DEBUG: boolean = (() => {
   if (typeof window !== 'undefined' && (window as any).__STREAM_MONACO_DEBUG__ !== undefined)
     return Boolean((window as any).__STREAM_MONACO_DEBUG__)
-  const proc = nodeProcess as any
-  if (proc && proc.env && proc.env.NODE_ENV === 'production')
-    return false
 
   return false
 })()

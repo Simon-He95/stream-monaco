@@ -9,10 +9,6 @@ export function createScrollWatcherForEditor(
     setLast: (v: number) => void
   },
 ) {
-  // Debug logging: enabled by default for local diagnosis but controllable by
-  // - a global `window.__STREAM_MONACO_DEBUG__` override (true/false), or
-  // - `process.env.NODE_ENV === 'production'` which disables debug logs.
-  // Use centralized DEBUG from logger
   const initial = ed.getScrollTop?.() ?? 0
   opts.setLast(initial)
   log('scrollWatcher', 'initial scrollTop=', initial)
