@@ -4,6 +4,7 @@ import { defaultRevealBatchOnIdleMs, defaultRevealDebounceMs, defaultScrollbar, 
 import { computeMinimalEdit } from '../minimalEdit'
 import * as monaco from '../monaco-shim'
 import { createHeightManager } from '../utils/height'
+import { error, log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
@@ -15,7 +16,8 @@ export class EditorManager {
   private _hasScrollBar = false
 
   private shouldAutoScroll = true
-  private scrollWatcher: monaco.IDisposable | null = null
+  private scrollWatcher: any = null
+  private scrollWatcherSuppressionTimer: number | null = null
   private lastScrollTop = 0
 
   private cachedScrollHeight: number | null = null
@@ -23,6 +25,7 @@ export class EditorManager {
   private cachedComputedHeight: number | null = null
   private cachedLineCount: number | null = null
   private lastKnownCodeDirty = false
+  private debug = false
 
   // read a small set of viewport/layout metrics once to avoid repeated DOM reads
   private measureViewport() {
@@ -53,8 +56,10 @@ export class EditorManager {
   private readonly revealDebounceMs = defaultRevealDebounceMs
   // idle timer for final batch reveal
   private revealIdleTimerId: number | null = null
+  private revealTicket = 0
   private revealStrategyOption?: 'bottom' | 'centerIfOutside' | 'center'
   private revealBatchOnIdleMsOption?: number
+  private readonly scrollWatcherSuppressionMs = 500
 
   constructor(
     private options: MonacoOptions,
@@ -66,6 +71,28 @@ export class EditorManager {
     private autoScrollThresholdLines: number,
     private revealDebounceMsOption?: number,
   ) { }
+
+  // initialize debug flag: prefer explicit runtime flag, then options, fallback to false
+  private initDebugFlag() {
+    // Browser global override: `window.__STREAM_MONACO_DEBUG__` (true/false)
+    if (typeof window !== 'undefined' && (window as any).__STREAM_MONACO_DEBUG__ !== undefined) {
+      this.debug = Boolean((window as any).__STREAM_MONACO_DEBUG__)
+      return
+    }
+    // Option-level override: `options.debug`
+    if (this.options && (this.options as any).debug !== undefined) {
+      this.debug = Boolean((this.options as any).debug)
+      return
+    }
+    this.debug = false
+  }
+
+  // instance-level debug logger helper to avoid repetitive guards
+  private dlog(...args: any[]) {
+    if (!this.debug)
+      return
+    log('EditorManager', ...args)
+  }
 
   private hasVerticalScrollbar(): boolean {
     if (!this.editorView)
@@ -94,6 +121,10 @@ export class EditorManager {
     const lineCount = this.cachedLineCount ?? editorView.getModel()?.getLineCount() ?? 1
     const lineHeight = editorView.getOption(monaco.editor.EditorOption.lineHeight)
     const height = Math.min(lineCount * lineHeight + padding, this.maxHeightValue)
+    try {
+      log('EditorManager.computedHeight', { lineCount, lineHeight, computed: height, maxHeightValue: this.maxHeightValue })
+    }
+    catch { }
     return height
   }
 
@@ -101,7 +132,12 @@ export class EditorManager {
     // Defer measurement and reveal work to the raf scheduler so we avoid forcing sync layout
     // during hot update paths. This coalesces multiple calls into one frame.
     this.rafScheduler.schedule('maybe-scroll', () => {
+      const hasVS = this.hasVerticalScrollbar()
+
+      this.dlog('maybeScrollToBottom called', { autoScrollOnUpdate: this.autoScrollOnUpdate, shouldAutoScroll: this.shouldAutoScroll, hasVerticalScrollbar: hasVS, targetLine })
+
       if (!(this.autoScrollOnUpdate && this.shouldAutoScroll && this.hasVerticalScrollbar())) {
+        this.dlog('maybeScrollToBottom skipped (auto-scroll conditions not met)')
         return
       }
 
@@ -113,9 +149,12 @@ export class EditorManager {
         if (this.revealIdleTimerId != null) {
           clearTimeout(this.revealIdleTimerId)
         }
+        const ticket = ++this.revealTicket
+        this.dlog('scheduled idle reveal ticket=', ticket, 'line=', line, 'batchMs=', batchMs)
         this.revealIdleTimerId = (setTimeout(() => {
           this.revealIdleTimerId = null
-          this.performReveal(line)
+          this.dlog('idle reveal timer firing, ticket=', ticket, 'line=', line)
+          this.performReveal(line, ticket)
         }, batchMs) as unknown) as number
         return
       }
@@ -132,14 +171,23 @@ export class EditorManager {
             : this.revealDebounceMs
       this.revealDebounceId = (setTimeout(() => {
         this.revealDebounceId = null
-        this.performReveal(line)
+        const ticket = ++this.revealTicket
+        this.dlog('scheduled debounce reveal ticket=', ticket, 'line=', line, 'ms=', ms)
+        this.performReveal(line, ticket)
       }, ms) as unknown) as number
     })
   }
 
-  private performReveal(line: number) {
+  private performReveal(line: number, ticket: number) {
     this.rafScheduler.schedule('reveal', () => {
+      if (ticket !== this.revealTicket) {
+        this.dlog('performReveal skipped, stale ticket', ticket, 'current', this.revealTicket)
+        return
+      }
+      this.dlog('performReveal executing, ticket=', ticket, 'line=', line)
+      this.lastPerformedRevealTicket = ticket
       const strategy = this.revealStrategyOption ?? this.options.revealStrategy ?? 'centerIfOutside'
+      this.dlog('performReveal strategy=', strategy)
       const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
       const smooth = (ScrollType && typeof ScrollType.Smooth !== 'undefined') ? ScrollType.Smooth : undefined
       try {
@@ -169,6 +217,81 @@ export class EditorManager {
     })
   }
 
+  // Try to reveal immediately (synchronous) to keep the scroll in-step with
+  // edits when we know an update just appended or changed line count.
+  // This is a fast-path to reduce the perceived lag before the debounced
+  // reveal kicks in. It still leaves the debounced/idle reveal as a fallback
+  // for coalescing frequent updates.
+  private performImmediateReveal(line: number, ticket: number) {
+    this.dlog('performImmediateReveal line=', line, 'ticket=', ticket)
+    try {
+      if (!this.editorView)
+        return
+      if (ticket !== this.revealTicket) {
+        this.dlog('performImmediateReveal skipped, stale ticket', ticket, 'current', this.revealTicket)
+        return
+      }
+      this.lastPerformedRevealTicket = ticket
+      // Prefer an immediate (non-animated) reveal here to avoid visual
+      // jitter caused by smooth scroll animations. Some Monaco builds expose
+      // a ScrollType with Immediate; otherwise calling revealLine without
+      // a Smooth type typically performs an instant jump.
+      const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+      const immediate = (ScrollType && typeof ScrollType.Immediate !== 'undefined') ? ScrollType.Immediate : undefined
+      if (typeof immediate !== 'undefined') {
+        this.editorView.revealLine(line, immediate)
+      }
+      else {
+        this.editorView.revealLine(line)
+      }
+    }
+    catch { }
+    // Update cached viewport metrics to keep internal state consistent
+    try {
+      this.measureViewport()
+    }
+    catch { }
+  }
+
+  // Force an immediate (synchronous) reveal of a line, bypassing the
+  // ticketing/debounce mechanism. Used when we explicitly applied the
+  // container to the max height and need the scroll to follow immediately.
+  private forceReveal(line: number) {
+    try {
+      if (!this.editorView)
+        return
+      const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+      const immediate = (ScrollType && typeof ScrollType.Immediate !== 'undefined') ? ScrollType.Immediate : undefined
+      if (typeof immediate !== 'undefined')
+        this.editorView.revealLine(line, immediate)
+      else this.editorView.revealLine(line)
+    }
+    catch { }
+    try {
+      this.measureViewport()
+    }
+    catch { }
+    // After forcing a reveal, ensure auto-scroll state is on and the
+    // lastScrollTop is synchronized so the scrollWatcher doesn't treat
+    // this programmatic scroll as user input.
+    try {
+      this.shouldAutoScroll = true
+      this.lastScrollTop = this.editorView?.getScrollTop?.() ?? this.lastScrollTop
+    }
+    catch { }
+  }
+
+  private isOverflowAuto() {
+    try {
+      return !!this.lastContainer && this.lastContainer.style.overflow === 'auto'
+    }
+    catch { return false }
+  }
+
+  private shouldPerformImmediateReveal() {
+    return this.autoScrollOnUpdate && this.shouldAutoScroll && this.hasVerticalScrollbar() && this.isOverflowAuto()
+  }
+
   async createEditor(
     container: HTMLElement,
     code: string,
@@ -178,7 +301,13 @@ export class EditorManager {
     this.cleanup()
     this.lastContainer = container
 
-    container.style.overflow = 'auto'
+    this.initDebugFlag()
+    this.dlog('createEditor container, maxHeight', this.maxHeightValue)
+
+    // Start with hidden overflow so we don't show a scrollbar before the
+    // editor reaches its configured max height. We'll toggle to `auto`
+    // when the computed height reaches `maxHeightValue`.
+    container.style.overflow = 'hidden'
     container.style.maxHeight = this.maxHeightCSS
 
     this.editorView = monaco.editor.create(container, {
@@ -216,8 +345,29 @@ export class EditorManager {
       clearTimeout(this.revealIdleTimerId)
     }
     this.revealIdleTimerId = null
-    this.editorHeightManager = createHeightManager(container, () => this.computedHeight(this.editorView!))
+    // Compute and apply the editor's height (with internal hysteresis to
+    // avoid tiny changes). Provide a small minimum visible height so the
+    // editor doesn't collapse to a single line while content is streaming.
+    const MIN_VISIBLE_HEIGHT = Math.min(120, this.maxHeightValue)
+    // Ensure the container cannot visually collapse below the minimum height
+    // even if height manager misses an update or receives an invalid value.
+    container.style.minHeight = `${MIN_VISIBLE_HEIGHT}px`
+    this.editorHeightManager = createHeightManager(container, () => {
+      const computed = this.computedHeight(this.editorView!)
+      const clamped = Math.min(computed, this.maxHeightValue)
+      return Math.max(clamped, MIN_VISIBLE_HEIGHT)
+    })
     this.editorHeightManager.update()
+
+    // If the initial computed height already reaches (or is very near) the
+    // configured max height, apply it immediately so the UI shows the
+    // scrolled state without waiting for the debounced height manager.
+    const initialComputed = this.computedHeight(this.editorView)
+    if (initialComputed >= this.maxHeightValue - 1) {
+      container.style.height = `${this.maxHeightValue}px`
+      container.style.overflow = 'auto'
+      this.dlog('applied immediate maxHeight on createEditor', this.maxHeightValue)
+    }
 
     this.cachedScrollHeight = this.editorView.getScrollHeight?.() ?? null
     this.cachedLineHeight = this.editorView.getOption?.(monaco.editor.EditorOption.lineHeight) ?? null
@@ -230,13 +380,32 @@ export class EditorManager {
       // the content-size-change event which can fire frequently.
       this.rafScheduler.schedule('content-size-change', () => {
         try {
-          this.measureViewport()
+          this.dlog('content-size-change frame')
+          const m = this.measureViewport()
+          this.dlog('content-size-change measure', m)
           this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
-          if (this.editorHeightManager?.isSuppressed())
+          if (this.editorHeightManager?.isSuppressed()) {
+            this.dlog('content-size-change skipped height update (suppressed)')
             return
+          }
+          this.dlog('content-size-change calling heightManager.update')
           this.editorHeightManager?.update()
+          // Toggle overflow based on whether we've effectively reached max height.
+          const computed = this.computedHeight(this.editorView!)
+          if (this.lastContainer) {
+            const prevOverflow = this.lastContainer.style.overflow
+            const newOverflow = computed >= this.maxHeightValue - 1 ? 'auto' : 'hidden'
+            if (prevOverflow !== newOverflow) {
+              this.lastContainer.style.overflow = newOverflow
+              // If we just switched to visible overflow and auto-scroll is on,
+              // schedule a scroll to bottom so the user sees the latest content.
+              if (newOverflow === 'auto' && this.shouldAutoScroll) {
+                this.maybeScrollToBottom()
+              }
+            }
+          }
         }
-        catch { }
+        catch (err) { error('EditorManager', 'content-size-change error', err) }
       })
     })
 
@@ -285,6 +454,84 @@ export class EditorManager {
     }
   }
 
+  private suppressScrollWatcher(ms: number) {
+    try {
+      if (!this.scrollWatcher || typeof this.scrollWatcher.setSuppressed !== 'function')
+        return
+      this.dlog('suppressScrollWatcher', ms)
+      // clear existing timer
+      if (this.scrollWatcherSuppressionTimer != null) {
+        clearTimeout(this.scrollWatcherSuppressionTimer)
+        this.scrollWatcherSuppressionTimer = null
+      }
+      this.scrollWatcher.setSuppressed(true)
+      this.scrollWatcherSuppressionTimer = (setTimeout(() => {
+        try {
+          if (this.scrollWatcher && typeof this.scrollWatcher.setSuppressed === 'function') {
+            this.scrollWatcher.setSuppressed(false)
+            this.dlog('suppressScrollWatcher cleared')
+          }
+        }
+        catch { }
+        this.scrollWatcherSuppressionTimer = null
+      }, ms) as unknown) as number
+    }
+    catch { }
+  }
+
+  // Schedule an immediate reveal after layout has settled (two RAFs).
+  // This reduces races where a reveal runs before the editor/container
+  // has applied its new size, which can cause reveal to be a no-op or
+  // be applied in the wrong order relative to other reveals.
+  private scheduleImmediateRevealAfterLayout(line: number) {
+    const ticket = ++this.revealTicket
+    this.dlog('scheduleImmediateRevealAfterLayout ticket=', ticket, 'line=', line)
+    this.rafScheduler.schedule('immediate-reveal', async () => {
+      try {
+        // If we have a height manager, compute the expected applied height
+        const target = this.editorView && this.editorHeightManager
+          ? Math.min(this.computedHeight(this.editorView), this.maxHeightValue)
+          : -1
+        if (target !== -1 && this.editorHeightManager) {
+          // Wait until the height manager reports the target as applied
+          await this.waitForHeightApplied(target, 500)
+        }
+        else {
+          // fallback: wait two frames to let layout settle
+          await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+        }
+        this.dlog('running delayed immediate reveal', 'ticket=', ticket, 'line=', line)
+        this.performImmediateReveal(line, ticket)
+      }
+      catch (err) { error('EditorManager', 'scheduleImmediateRevealAfterLayout error', err) }
+    })
+  }
+
+  private waitForHeightApplied(target: number, timeoutMs = 500) {
+    return new Promise<void>((resolve) => {
+      const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+      const check = () => {
+        try {
+          const last = this.editorHeightManager?.getLastApplied?.() ?? -1
+          if (last !== -1 && Math.abs(last - target) <= 12) {
+            this.dlog('waitForHeightApplied satisfied', last, 'target=', target)
+            resolve()
+            return
+          }
+          const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+          if (now - start > timeoutMs) {
+            log('EditorManager', 'waitForHeightApplied timeout', last, 'target=', target)
+            resolve()
+            return
+          }
+        }
+        catch { }
+        requestAnimationFrame(check)
+      }
+      check()
+    })
+  }
+
   updateCode(newCode: string, codeLanguage: string) {
     this.pendingUpdate = { code: newCode, lang: codeLanguage }
     this.rafScheduler.schedule('update', () => this.flushPendingUpdate())
@@ -311,7 +558,35 @@ export class EditorManager {
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
       if (newLineCount !== prevLineCount) {
-        this.maybeScrollToBottom(newLineCount)
+        // Temporarily suppress the scroll watcher while we run the
+        // immediate reveal to avoid the watcher interpreting the layout
+        // driven scroll as user input and toggling auto-scroll state.
+        const shouldImmediate = this.shouldPerformImmediateReveal()
+        if (shouldImmediate)
+          this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
+        // If we jumped to the max height, apply it immediately so the
+        // scroller appears consistently while content streams.
+        try {
+          const computed = this.computedHeight(this.editorView)
+          if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+            this.lastContainer.style.height = `${this.maxHeightValue}px`
+        }
+        catch { }
+        if (shouldImmediate) {
+          try {
+            this.forceReveal(newLineCount)
+          }
+          catch { }
+          // don't schedule another reveal — we've already revealed synchronously
+        }
+        else {
+          // Schedule an immediate reveal on the next RAF frame to allow the
+          // editor to apply layout changes first; use rafScheduler to avoid
+          // forcing synchronous layout here. If we schedule an immediate
+          // reveal, skip scheduling the debounced `maybeScrollToBottom` to
+          // avoid competing reveal calls that can cause jumps.
+          this.maybeScrollToBottom(newLineCount)
+        }
       }
       return
     }
@@ -342,7 +617,15 @@ export class EditorManager {
     const newLineCount = model.getLineCount()
     this.cachedLineCount = newLineCount
     if (newLineCount !== prevLineCount) {
-      this.maybeScrollToBottom(newLineCount)
+      const shouldImmediate = this.shouldPerformImmediateReveal()
+      if (shouldImmediate)
+        this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
+      if (shouldImmediate) {
+        this.scheduleImmediateRevealAfterLayout(newLineCount)
+      }
+      else {
+        this.maybeScrollToBottom(newLineCount)
+      }
     }
   }
 
@@ -440,7 +723,27 @@ export class EditorManager {
     const newLineCount = model.getLineCount()
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount
-      this.maybeScrollToBottom(newLineCount)
+      const shouldImmediate = this.shouldPerformImmediateReveal()
+      if (shouldImmediate)
+        this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
+      // When appends push the computed height to the max, apply the max
+      // immediately so the editor doesn't show an intermediate scrollbar
+      // before the debounced height manager settles.
+      try {
+        const computed = this.computedHeight(this.editorView)
+        if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+          this.lastContainer.style.height = `${this.maxHeightValue}px`
+      }
+      catch { }
+      if (shouldImmediate) {
+        try {
+          this.forceReveal(newLineCount)
+        }
+        catch { }
+      }
+      else {
+        this.maybeScrollToBottom(newLineCount)
+      }
     }
   }
 
@@ -465,10 +768,28 @@ export class EditorManager {
     this.rafScheduler.cancel('update')
     this.rafScheduler.cancel('sync-last-known')
     this.rafScheduler.cancel('content-size-change')
+    // cancel any pending reveal/scroll tasks to avoid operating on disposed editor
+    this.rafScheduler.cancel('maybe-scroll')
+    this.rafScheduler.cancel('reveal')
+    this.rafScheduler.cancel('immediate-reveal')
+    this.rafScheduler.cancel('maybe-resume')
     this.pendingUpdate = null
     this.rafScheduler.cancel('append')
     this.appendBufferScheduled = false
     this.appendBuffer.length = 0
+
+    if (this.revealDebounceId != null) {
+      clearTimeout(this.revealDebounceId)
+      this.revealDebounceId = null
+    }
+    if (this.revealIdleTimerId != null) {
+      clearTimeout(this.revealIdleTimerId)
+      this.revealIdleTimerId = null
+    }
+    if (this.scrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.scrollWatcherSuppressionTimer)
+      this.scrollWatcherSuppressionTimer = null
+    }
 
     if (this.editorView) {
       this.editorView.dispose()
@@ -476,6 +797,7 @@ export class EditorManager {
     }
     this.lastKnownCode = null
     if (this.lastContainer) {
+      this.lastContainer.style.minHeight = ''
       this.lastContainer.innerHTML = ''
       this.lastContainer = null
     }
@@ -493,15 +815,30 @@ export class EditorManager {
     this.rafScheduler.cancel('update')
     this.pendingUpdate = null
     this.rafScheduler.cancel('sync-last-known')
-
+    // Cancel/cleanup watchers and timers
     if (this.scrollWatcher) {
-      this.scrollWatcher.dispose()
+      try {
+        this.scrollWatcher.dispose()
+      }
+      catch { }
       this.scrollWatcher = null
     }
     if (this.revealDebounceId != null) {
       clearTimeout(this.revealDebounceId)
       this.revealDebounceId = null
     }
+    if (this.revealIdleTimerId != null) {
+      clearTimeout(this.revealIdleTimerId)
+      this.revealIdleTimerId = null
+    }
+    if (this.scrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.scrollWatcherSuppressionTimer)
+      this.scrollWatcherSuppressionTimer = null
+    }
+    this.rafScheduler.cancel('maybe-scroll')
+    this.rafScheduler.cancel('reveal')
+    this.rafScheduler.cancel('immediate-reveal')
+    this.rafScheduler.cancel('maybe-resume')
 
     this._hasScrollBar = false
     this.shouldAutoScroll = !!this.autoScrollInitial
