@@ -8,6 +8,7 @@ const {
   updateDiff,
   appendModified,
   appendOriginal,
+  getDiffModels,
   cleanupEditor,
 } = useMonaco({
   // options forwarded to monaco
@@ -44,6 +45,46 @@ onMounted(async () => {
     updateDiff(prevOriginal, next, 'typescript')
   }, 400)
 })
+
+// Stress test controls
+const running = ref(false)
+const result = ref<string | null>(null)
+async function runStressTest({ iterations = 2000, blockSize = 50, intervalMs = 1 } = {}) {
+  if (!el.value) return
+  if (running.value) return
+  running.value = true
+  result.value = null
+  // prepare base block and expected
+  const block = rightBase.repeat(Math.ceil(blockSize / rightBase.length)).slice(0, blockSize)
+  let expected = ''
+  // ensure editor is initialized to small values
+  await createDiffEditor(el.value, original.slice(0, 1), modified.slice(0, 1), 'typescript')
+  for (let j = 0; j < iterations; j++) {
+    expected += block
+    updateDiff(original.slice(0, Math.min(expected.length, original.length)), expected, 'typescript')
+    // yield to event loop and respect interval
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  // wait for final flush
+  await new Promise(r => setTimeout(r, 500))
+  try {
+    const models = getDiffModels()
+    const actual = models.modified?.getValue() ?? ''
+    if (actual === expected) {
+      result.value = `PASS - length ${actual.length}`
+    }
+    else {
+      // find first mismatch
+      let idx = 0
+      while (idx < Math.min(actual.length, expected.length) && actual[idx] === expected[idx]) idx++
+      result.value = `FAIL at ${idx} (expected ${expected.length}, actual ${actual.length})`
+    }
+  }
+  catch (err) {
+    result.value = `ERROR: ${String(err)}`
+  }
+  running.value = false
+}
 </script>
 
 <template>
@@ -51,6 +92,9 @@ onMounted(async () => {
     <div ref="el" class="editor" />
     <div class="actions">
       <button @click="cleanupEditor">Dispose</button>
+      <button @click.prevent="runStressTest({ iterations: 2000, blockSize: 50, intervalMs: 1 })" :disabled="running">Run Stress (1ms,50ch x2000)</button>
+      <button @click.prevent="runStressTest({ iterations: 2000, blockSize: 50, intervalMs: 4 })" :disabled="running">Run Stress (4ms)</button>
+      <div style="margin-top:8px">Result: {{ result ?? 'n/a' }}</div>
     </div>
   </div>
 </template>

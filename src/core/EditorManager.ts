@@ -560,13 +560,15 @@ export class EditorManager {
     }
 
     // If we have pending append buffer entries that haven't been flushed to the
-    // underlying model yet, prefer reading the authoritative model value rather
-    // than the optimistic `lastKnownCode` which may already include unflushed
-    // suffixes. Using the model avoids making append/minimal-edit decisions
-    // based on a state that hasn't been applied yet (which can cause
-    // duplicated tails).
+    // underlying model yet, prefer reading the authoritative model value plus
+    // any buffered suffix. When streaming at high rates it's possible that
+    // `appendBuffer` already contains text that hasn't been applied yet; using
+    // just `editorView.getValue()` would cause us to later append that same
+    // buffered text again (duplicating content). Concatenate the buffer to
+    // model value so `prevCode` reflects the true forthcoming model state.
+    const buffered = this.appendBuffer.length > 0 ? this.appendBuffer.join('') : ''
     const prevCode = (this.appendBuffer.length > 0)
-      ? this.editorView.getValue()
+      ? (this.editorView.getValue() + buffered)
       : (this.lastKnownCode ?? this.editorView.getValue())
     if (prevCode === newCode)
       return
@@ -685,6 +687,11 @@ export class EditorManager {
     else {
       this.editorView.executeEdits('append', [{ range, text, forceMoveMarkers: true }])
     }
+    // Keep lastKnownCode in sync with the model after applying buffered appends
+    try {
+      this.lastKnownCode = model.getValue()
+    }
+    catch { }
     const newLineCount = model.getLineCount()
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount

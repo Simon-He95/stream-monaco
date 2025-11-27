@@ -781,18 +781,20 @@ export class DiffEditorManager {
     }
 
     // If we have buffered appends for the modified side that haven't been
-    // flushed yet, prefer the authoritative model value rather than the
-    // optimistic `lastKnownModifiedCode` which may already include unflushed
-    // suffixes. This avoids appending duplicate tails when we decide the
-    // new `modified` is an append of the previous content.
+    // flushed yet, prefer the authoritative model value plus any buffered
+    // suffix rather than the optimistic `lastKnownModifiedCode` which may
+    // already include unflushed suffixes. Concatenating the buffer here
+    // ensures we don't treat buffered-but-unapplied content as "missing"
+    // and then append it again, which would duplicate text.
     let prevM: string = this.lastKnownModifiedCode!
+    const buffered = this.appendBufferDiff.length > 0 ? this.appendBufferDiff.join('') : ''
     if (this.appendBufferDiff.length > 0) {
       try {
-        prevM = m.getValue()
+        prevM = m.getValue() + buffered
         this.lastKnownModifiedCode = prevM
       }
       catch {
-        prevM = this.lastKnownModifiedCode ?? ''
+        prevM = (this.lastKnownModifiedCode ?? '') + buffered
       }
     }
     const prevMLineCount = m.getLineCount()
