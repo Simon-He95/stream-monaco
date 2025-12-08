@@ -20,7 +20,6 @@ IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `
 
 说明：内部响应式基于 `alien-signals` 的轻薄适配层实现，因此核心逻辑不再强依赖 Vue。Vue 仍然完全支持，但被标记为可选的 peer 依赖，使库在非 Vue 环境也可复用核心能力，且对现有 API 无破坏。
 - 🎨 **Shiki 高亮** - 使用 Shiki 实现高效的语法高亮，支持 TextMate 语法和 VS Code 主题
-- 🌓 **主题切换** - 自动监听 isDark 模式变化，智能切换明暗主题
 - 📝 **流式更新** - 支持流式输入更新，实时响应代码变化
 
 - `registerMonacoThemes(themes, languages): Promise<Highlighter>` — 使用 shiki 创建或获取高亮器并把主题注册到 Monaco，返回解析为 shiki highlighter 的 Promise，便于复用（例如渲染页面片段）。
@@ -263,8 +262,6 @@ cleanupEditor()
 <div id="editor" style="height: 500px; border: 1px solid #e5e7eb;"></div>
 <script type="module" src="/main.ts"></script>
 ```
-
-库同时暴露 `isDark`（响应式 ref），会跟随 `<html class="dark">` 或系统颜色偏好，编辑器内部会自动应用主题。
 
 ### React 基础用法
 
@@ -711,20 +708,6 @@ onUnmounted(() => {
   cleanupEditor()
 })
 </script>
-```
-
-#### 3. 主题跟随系统
-
-```typescript
-import { useDark } from '@vueuse/core'
-
-const isDark = useDark()
-
-const { createEditor, setTheme } = useMonaco({
-  themes: ['github-dark', 'github-light'],
-})
-
-// 主题会自动跟随 isDark 状态切换
 ```
 
 ### 故障排除

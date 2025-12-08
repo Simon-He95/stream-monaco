@@ -464,8 +464,6 @@ cleanupEditor()
 <script type="module" src="/main.ts"></script>
 ```
 
-The library also exposes `isDark` (a small reactive ref) that follows `<html class="dark">` or the system color-scheme. Theme switching inside the editor is handled automatically.
-
 ### Migration notes
 
 - v0.0.34+: Internal reactivity is implemented via a thin adapter over `alien-signals`, removing the hard dependency on Vue. Vue remains fully supported but is optional. No breaking changes to the public API.

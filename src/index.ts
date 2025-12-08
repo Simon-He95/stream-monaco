@@ -5,11 +5,10 @@ import { detectLanguage, processedLanguage } from './code.detect'
 import { defaultLanguages, defaultRevealDebounceMs, defaultThemes, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from './constant'
 import { DiffEditorManager } from './core/DiffEditorManager'
 import { EditorManager } from './core/EditorManager'
-import { isDark } from './isDark'
 import { computeMinimalEdit } from './minimalEdit'
 import * as monaco from './monaco-shim'
 import { preloadMonacoWorkers } from './preloadMonacoWorkers'
-import { computed, watch } from './reactivity'
+import { computed } from './reactivity'
 import { createRafScheduler } from './utils/raf'
 import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes, setThemeRegisterPromise } from './utils/registerMonacoThemes'
 
@@ -180,13 +179,9 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   let lastAppliedTheme: string | null = null
   const currentTheme = computed<string>(() =>
     monacoOptions.theme
-    ?? (isDark.value
-      ? typeof themes[0] === 'string'
-        ? themes[0]
-        : (themes[0] as any).name
-      : typeof themes[1] === 'string'
-        ? themes[1]
-        : (themes[1] as any).name),
+    ?? (typeof themes[0] === 'string'
+      ? themes[0]
+      : (themes[0] as any).name),
   )
   let themeWatcher: WatchStopHandle | null = null
 
@@ -337,19 +332,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     if (typeof monacoOptions.onThemeChange === 'function') {
       monacoOptions.onThemeChange(initialThemeName as any)
     }
-    // Watch theme changes - use internal setter so onThemeChange is invoked
-    if (!monacoOptions.theme) {
-      themeWatcher = watch(
-        () => isDark.value,
-        () => {
-          const t = currentTheme.value
-          if (t !== lastAppliedTheme) {
-            void setThemeInternal(t)
-          }
-        },
-        { flush: 'post', immediate: true },
-      )
-    }
 
     if (editorView)
       lastKnownCode = editorView.getValue()
@@ -411,19 +393,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
 
     if (typeof monacoOptions.onThemeChange === 'function') {
       monacoOptions.onThemeChange(initialThemeName as any)
-    }
-    // 主题监听 - use internal setter so onThemeChange is invoked
-    if (!monacoOptions.theme) {
-      themeWatcher = watch(
-        () => isDark.value,
-        () => {
-          const t = currentTheme.value
-          if (t !== lastAppliedTheme) {
-            void setThemeInternal(t)
-          }
-        },
-        { flush: 'post', immediate: true },
-      )
     }
 
     // cache models for getters
@@ -922,6 +891,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   }
 }
 
-export { clearHighlighterCache, defaultRevealDebounceMs, detectLanguage, getOrCreateHighlighter, isDark, preloadMonacoWorkers, registerMonacoThemes, useMonaco }
+export { clearHighlighterCache, defaultRevealDebounceMs, detectLanguage, getOrCreateHighlighter, preloadMonacoWorkers, registerMonacoThemes, useMonaco }
 
 export * from './type'
