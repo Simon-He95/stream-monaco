@@ -236,7 +236,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     requestedThemeName = themeName
     globalRequestedThemeName = themeName
 
-    // Monaco theme is global. Per-instance lastAppliedTheme can become stale
+    // Monaco theme is global. Per-instance globalAppliedThemeName can become stale
     // when another useMonaco() instance changes the theme.
     if (!force && themeName === globalAppliedThemeName) {
       return
@@ -273,7 +273,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
 
     try {
       monaco.editor.setTheme(themeName)
-      lastAppliedTheme = themeName
       globalAppliedThemeName = themeName
     }
     catch {
@@ -283,7 +282,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
           return
         }
         monaco.editor.setTheme(themeName)
-        lastAppliedTheme = themeName
         globalAppliedThemeName = themeName
         await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(() => undefined)
       }
@@ -391,7 +389,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       monacoOptions.revealDebounceMs,
     )
     editorView = await editorMgr.createEditor(container, code, language, initialThemeName)
-    lastAppliedTheme = initialThemeName
 
     // If updateCode was called while createEditor was awaiting theme registration,
     // apply the latest queued update once the editor is ready.
@@ -443,7 +440,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     await ensureThemeRegistered(initialThemeName)
     try {
       monaco.editor.setTheme(initialThemeName)
-      lastAppliedTheme = initialThemeName
     }
     catch {
       // ignore
