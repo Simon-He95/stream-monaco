@@ -321,6 +321,7 @@ export class EditorManager {
       },
       ...this.options,
     })
+    this.dlog('createEditor apply theme', currentTheme)
     monaco.editor.setTheme(currentTheme)
 
     this.lastKnownCode = this.editorView.getValue()

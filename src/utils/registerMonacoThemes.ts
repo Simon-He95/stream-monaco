@@ -4,9 +4,7 @@ import { createHighlighter } from 'shiki'
 import * as monaco from '../monaco-shim'
 import { arraysEqual } from './arraysEqual'
 
-let themesRegistered = false
 let languagesRegistered = false
-let currentThemes: (ThemeInput | string | SpecialTheme)[] = []
 let currentLanguages: string[] = []
 // promise that resolves to a shiki highlighter or null when registration completes
 let themeRegisterPromise: Promise<import('../type').ShikiHighlighter | null> | null = null
@@ -35,6 +33,90 @@ interface HighlighterEntry {
 }
 
 const highlighterCache = new Map<string, HighlighterEntry>()
+
+// Monaco integration is global (monaco.editor.setTheme is patched by shikiToMonaco).
+// When multiple editors/code blocks initialize concurrently with different theme
+// sets, repeatedly calling shikiToMonaco with different highlighters causes the
+// last one to win, and themes not present in that last highlighter can throw.
+//
+// To avoid that, keep a single shared highlighter for Monaco and incrementally
+// load themes/languages into it.
+let monacoHighlighterPromise: Promise<import('../type').ShikiHighlighter> | null = null
+let lastPatchedHighlighter: import('../type').ShikiHighlighter | null = null
+const monacoThemeByKey = new Map<string, ThemeInput | string | SpecialTheme>()
+const monacoLanguageSet = new Set<string>()
+
+function themeKey(t: ThemeInput | string | SpecialTheme) {
+  return typeof t === 'string' ? t : (t as any).name ?? JSON.stringify(t)
+}
+
+async function ensureMonacoHighlighter(
+  themes: (ThemeInput | string | SpecialTheme)[],
+  languages: string[],
+) {
+  // track union first
+  for (const t of themes)
+    monacoThemeByKey.set(themeKey(t), t)
+  for (const l of languages)
+    monacoLanguageSet.add(l)
+
+  // create shared highlighter once
+  if (!monacoHighlighterPromise) {
+    const initialThemes = Array.from(monacoThemeByKey.values())
+    const initialLangs = Array.from(monacoLanguageSet.values())
+    monacoHighlighterPromise = createHighlighter({ themes: initialThemes, langs: initialLangs })
+      .then(h => h)
+  }
+
+  const h = await monacoHighlighterPromise
+
+  // Incrementally load missing themes/langs when supported by shiki.
+  // If incremental loading isn't available, fall back to re-creating the shared
+  // highlighter with the full union (still safe because the union only grows).
+  const wantsThemes = Array.from(monacoThemeByKey.values())
+  const wantsLangs = Array.from(monacoLanguageSet.values())
+
+  const canLoadTheme = typeof (h as any).loadTheme === 'function'
+  const canLoadLanguage = typeof (h as any).loadLanguage === 'function'
+
+  if (canLoadTheme || canLoadLanguage) {
+    if (canLoadTheme) {
+      // loadTheme is idempotent in shiki; call only for newly requested theme keys
+      for (const t of themes) {
+        const k = themeKey(t)
+        // If we've already loaded it, skip.
+        // We can't reliably introspect loaded themes from shiki, so track keys.
+        if (!(h as any).__streamMonacoLoadedThemes)
+          (h as any).__streamMonacoLoadedThemes = new Set<string>()
+        const loaded: Set<string> = (h as any).__streamMonacoLoadedThemes
+        if (loaded.has(k))
+          continue
+        await (h as any).loadTheme(t)
+        loaded.add(k)
+      }
+    }
+
+    if (canLoadLanguage) {
+      for (const l of languages) {
+        if (!(h as any).__streamMonacoLoadedLangs)
+          (h as any).__streamMonacoLoadedLangs = new Set<string>()
+        const loaded: Set<string> = (h as any).__streamMonacoLoadedLangs
+        if (loaded.has(l))
+          continue
+        await (h as any).loadLanguage(l)
+        loaded.add(l)
+      }
+    }
+
+    return h
+  }
+
+  // fallback: recreate shared highlighter with union
+  const p = createHighlighter({ themes: wantsThemes, langs: wantsLangs })
+    .then(hh => hh)
+  monacoHighlighterPromise = p
+  return p
+}
 
 /**
  * Clear all cached shiki highlighters.
@@ -149,24 +231,16 @@ export async function registerMonacoThemes(
   return enqueueRegistration(async () => {
     registerMonacoLanguages(languages)
 
-    if (
-      themesRegistered
-      && arraysEqual(themes, currentThemes)
-      && arraysEqual(languages, currentLanguages)
-    ) {
-      // return existing highlighter if available
-      const existing = highlighterCache.get(serializeThemes(themes))
-      return existing ? existing.promise : Promise.resolve(null)
-    }
-
     const p = (async () => {
-      const highlighter = await getOrCreateHighlighter(themes, languages)
-      shikiToMonaco(highlighter, monaco)
+      const highlighter = await ensureMonacoHighlighter(themes, languages)
 
-      themesRegistered = true
-      // Copy inputs so later in-place mutations from consumers don't trick our
-      // shallow equality check (arraysEqual short-circuits on reference equality).
-      currentThemes = themes.slice()
+      // Patch Monaco once per shared-highlighter instance.
+      if (lastPatchedHighlighter !== highlighter) {
+        shikiToMonaco(highlighter, monaco)
+        lastPatchedHighlighter = highlighter
+      }
+
+      // Track last language set for Monaco language registration short-circuit.
       currentLanguages = languages.slice()
       return highlighter
     })()

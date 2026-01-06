@@ -4,7 +4,8 @@ describe('registerMonacoThemes', () => {
   it('re-registers when themes array is mutated in place', async () => {
     vi.resetModules()
 
-    const createHighlighter = vi.fn(async () => ({}))
+    const loadTheme = vi.fn(async () => undefined)
+    const createHighlighter = vi.fn(async () => ({ loadTheme }))
     vi.doMock('shiki', () => ({ createHighlighter }))
     vi.doMock('@shikijs/monaco', () => ({ shikiToMonaco: vi.fn() }))
     vi.doMock('../src/monaco-shim', () => {
@@ -22,7 +23,9 @@ describe('registerMonacoThemes', () => {
     themes.push('andromeeda')
     await registerMonacoThemes(themes, langs)
 
-    expect(createHighlighter).toHaveBeenCalledTimes(2)
+    // Shared Monaco highlighter is created once; additional themes are loaded incrementally.
+    expect(createHighlighter).toHaveBeenCalledTimes(1)
+    expect(loadTheme).toHaveBeenCalledWith('andromeeda')
   })
 })
 

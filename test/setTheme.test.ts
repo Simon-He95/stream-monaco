@@ -50,4 +50,62 @@ describe('setTheme behavior', () => {
     await setTheme('vitesse-dark', true)
     expect((monaco.editor.setTheme as any).mock.calls.length).toBe(2)
   })
+
+  it('auto-loads missing shiki theme when highlighter is cached', async () => {
+    vi.resetModules()
+
+    // Mock shiki/monaco registration layer: always returns the same highlighter
+    // instance (simulating singleton caching), and requires explicit loadTheme
+    // before setTheme will succeed.
+    const loadedThemes = new Set<string>(['vitesse-dark', 'vitesse-light'])
+    const highlighter = {
+      loadTheme: vi.fn(async (t: string) => {
+        loadedThemes.add(t)
+      }),
+      setTheme: vi.fn(async (t: string) => {
+        if (!loadedThemes.has(t)) {
+          const err: any = new Error(`Theme ${t} not found, you may need to load it first`)
+          err.name = 'ShikiError'
+          throw err
+        }
+      }),
+      codeToHtml: vi.fn(() => ''),
+    }
+
+    vi.doMock('../src/utils/registerMonacoThemes', () => {
+      return {
+        clearHighlighterCache: () => {},
+        getOrCreateHighlighter: async () => highlighter,
+        registerMonacoThemes: async () => highlighter,
+        setThemeRegisterPromise: (p: any) => p,
+      }
+    })
+
+    // re-mock monaco shim for this resetModules scope
+    vi.doMock('../src/monaco-shim', () => {
+      const setTheme = vi.fn()
+      const setModelLanguage = vi.fn()
+      const editor = {
+        setTheme,
+        setModelLanguage,
+        IStandaloneCodeEditor: class {},
+        EditorOption: { lineHeight: 16 },
+      }
+      const languages = {
+        getLanguages: () => [],
+        register: () => {},
+      }
+      const Range = class {}
+      return { default: { editor, languages, Range }, editor, languages, Range }
+    })
+
+    const monaco = await import('../src/monaco-shim')
+    const mod = await import('../src/index')
+    const { setTheme } = mod.useMonaco({ themes: ['vitesse-dark', 'vitesse-light'] })
+
+    await setTheme('andromeeda')
+
+    expect(highlighter.loadTheme).toHaveBeenCalledWith('andromeeda')
+    expect(monaco.editor.setTheme).toHaveBeenCalledWith('andromeeda')
+  })
 })

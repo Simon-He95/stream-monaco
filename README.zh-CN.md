@@ -27,6 +27,10 @@ IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `
 
 注意：如果你只使用 Monaco 编辑器并在 `createEditor` 时传入了全量 `themes`，通常只需调用 `monaco.editor.setTheme(themeName)` 即可。
 
+补充：如果你要切换到一个**不在初始 `themes` 列表里的主题**（例如运行时才决定的 `andromeeda`），建议使用 `useMonaco()` 返回的 `await setTheme(themeName)`，而不是直接调用 `monaco.editor.setTheme(themeName)`。
+
+`setTheme()` 会确保主题被注册；并且在可能的情况下，会对底层 Shiki highlighter 进行一次 `loadTheme(themeName)` 的兜底，避免出现 `Theme ... not found, you may need to load it first` 这类“主题未加载”的错误。
+
 配置：`useMonaco()` 不会自动同步 Shiki highlighter；如果你需要在切换主题时同步页面中独立的 Shiki 渲染，请手动使用 `getOrCreateHighlighter(...)` 并调用高亮器实例的 `setTheme`。
 
 ### 安装

@@ -34,7 +34,9 @@ The package exports helpers around theme/highlighter for advanced use:
 - `registerMonacoThemes(themes, languages): Promise<Highlighter>` — create or reuse a Shiki highlighter and register themes to Monaco. Returns a Promise resolving to the highlighter for reuse (e.g., rendering snippets).
 - `getOrCreateHighlighter(themes, languages): Promise<Highlighter>` — get or create a highlighter (managed by internal cache). If you need to call `codeToHtml` or `setTheme` manually, use this and handle loading/errors.
 
-Note: If you only use Monaco and pass all `themes` to `createEditor`, typically just call `monaco.editor.setTheme(themeName)`.
+Note:
+- If the target theme is already included in the `themes` you passed to `useMonaco()`, calling `monaco.editor.setTheme(themeName)` is fine.
+- If you switch to a theme that was not pre-registered (e.g. dynamic theme name like `andromeeda`), prefer `await setTheme(themeName)` from `useMonaco()`. It will ensure the theme is registered, and when possible it will also try to `loadTheme` on the underlying Shiki highlighter to avoid "Theme not found, you may need to load it first" errors.
 
 Config: `useMonaco()` does not auto-sync an external Shiki highlighter; if you need external Shiki snippets to follow theme changes, call `getOrCreateHighlighter(...)` and `highlighter.setTheme(...)` yourself.
 
