@@ -352,7 +352,6 @@ export class DiffEditorManager {
       },
       ...this.options,
     })
-    console.warn('[stream-monaco:theme] DiffEditorManager apply theme', { currentTheme })
     monaco.editor.setTheme(currentTheme)
 
     this.diffEditorView.setModel({ original: this.originalModel, modified: this.modifiedModel })

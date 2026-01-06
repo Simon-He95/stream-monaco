@@ -186,8 +186,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   const appendBuffer: string[] = []
   let appendBufferScheduled = false
   // Diff 自动滚动控制由 DiffEditorManager 负责
-  // 记录上一次应用的主题，避免重复 setTheme 引发不必要的工作
-  let lastAppliedTheme: string | null = null
   const currentTheme = computed<string>(() =>
     monacoOptions.theme
     ?? (typeof themes[0] === 'string'
@@ -198,17 +196,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   // initialization path (which otherwise falls back to `themes[0]`) from
   // overwriting a theme chosen before createEditor/createDiffEditor runs.
   let requestedThemeName: string | null = monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
-  let themeCallSeq = 0
   let themeWatcher: WatchStopHandle | null = null
-
-  function themeTrace(event: string, payload?: any) {
-    const ts = (typeof performance !== 'undefined' && performance.now)
-      ? performance.now().toFixed(1)
-      : String(Date.now())
-    // Unconditional during debugging (user-requested).
-    // Use console.warn to match repo lint rules.
-    console.warn(`[stream-monaco:theme] @${ts}ms ${event}`, payload ?? '')
-  }
 
   // RAF scheduler (injectable time source possible via utils)
   const rafScheduler = createRafScheduler()
@@ -241,59 +229,45 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   async function setThemeInternal(theme: MonacoTheme, force = false): Promise<void> {
     const themeName = typeof theme === 'string' ? theme : (theme as any).name
 
-    themeCallSeq += 1
-    const callId = themeCallSeq
     globalThemeRequestSeq += 1
     const token = globalThemeRequestSeq
-    themeTrace('setTheme start', { callId, themeName, force, lastAppliedTheme, globalAppliedThemeName, requestedThemeName, optionTheme: monacoOptions.theme })
 
     // Persist the user's intent so editor initialization won't override it.
     requestedThemeName = themeName
     globalRequestedThemeName = themeName
-    themeTrace('setTheme requestedThemeName updated', { callId, token, requestedThemeName })
 
     // Monaco theme is global. Per-instance lastAppliedTheme can become stale
     // when another useMonaco() instance changes the theme.
     if (!force && themeName === globalAppliedThemeName) {
-      themeTrace('setTheme no-op (already applied)', { callId, themeName, globalAppliedThemeName })
       return
     }
 
     // Last-write-wins: if another setTheme() call happened after this one
     // started, abort before doing any further work.
     if (token !== globalThemeRequestSeq) {
-      themeTrace('setTheme aborted (stale before register)', { callId, token, latest: globalThemeRequestSeq })
       return
     }
 
-    themeTrace('setTheme registerMonacoThemes (base)', { callId, themesCount: themes.length, languagesCount: languages.length })
-    await registerMonacoThemes(themes, languages).catch((e) => {
-      themeTrace('setTheme base registerMonacoThemes failed (ignored)', { callId, error: (e as any)?.message ?? String(e) })
-      return undefined
-    })
+    await registerMonacoThemes(themes, languages).catch(() => undefined)
 
     if (token !== globalThemeRequestSeq) {
-      themeTrace('setTheme aborted (stale after base register)', { callId, token, latest: globalThemeRequestSeq })
       return
     }
 
     const availableNames = themes.map(t => (typeof t === 'string' ? t : (t as any).name))
     if (!availableNames.includes(themeName)) {
-      themeTrace('setTheme theme not in initial list; auto-register', { callId, themeName, availableNames })
       try {
         const extended = availableNames.concat(themeName)
         const maybeHighlighter = await registerMonacoThemes(extended as any, languages)
         await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(() => undefined)
       }
       catch {
-        themeTrace('setTheme auto-register failed; abort', { callId, themeName, availableNames })
         console.warn(`Theme "${themeName}" is not registered and automatic registration failed. Available themes: ${availableNames.join(', ')}`)
         return
       }
     }
 
     if (token !== globalThemeRequestSeq) {
-      themeTrace('setTheme aborted (stale before apply)', { callId, token, latest: globalThemeRequestSeq })
       return
     }
 
@@ -301,30 +275,25 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       monaco.editor.setTheme(themeName)
       lastAppliedTheme = themeName
       globalAppliedThemeName = themeName
-      themeTrace('setTheme applied', { callId, themeName, lastAppliedTheme, globalAppliedThemeName })
     }
     catch {
       try {
         const maybeHighlighter = await registerMonacoThemes(themes, languages)
         if (token !== globalThemeRequestSeq) {
-          themeTrace('setTheme aborted (stale before apply after re-register)', { callId, token, latest: globalThemeRequestSeq })
           return
         }
         monaco.editor.setTheme(themeName)
         lastAppliedTheme = themeName
         globalAppliedThemeName = themeName
-        themeTrace('setTheme applied after re-register', { callId, themeName, lastAppliedTheme, globalAppliedThemeName })
         await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(() => undefined)
       }
       catch (err2) {
-        themeTrace('setTheme failed', { callId, themeName, error: (err2 as any)?.message ?? String(err2) })
         console.warn(`Failed to set theme "${themeName}":`, err2)
         return
       }
     }
 
     if (token !== globalThemeRequestSeq) {
-      themeTrace('setTheme aborted (stale before onThemeChange)', { callId, token, latest: globalThemeRequestSeq })
       return
     }
 
@@ -337,14 +306,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     catch (err) {
       console.warn('onThemeChange callback threw an error:', err)
     }
-
-    themeTrace('setTheme done', { callId, themeName, lastAppliedTheme, requestedThemeName })
   }
 
   async function ensureThemeRegistered(themeName: string) {
     const availableNames = themes.map(t => (typeof t === 'string' ? t : (t as any).name))
     const list = availableNames.includes(themeName) ? themes : (themes.concat(themeName) as any)
-    themeTrace('ensureThemeRegistered', { themeName, inInitialList: availableNames.includes(themeName), listSize: list.length })
     await registerMonacoThemes(list as any, languages)
   }
 
@@ -412,14 +378,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     // Determine initial theme: prefer the theme requested via setTheme(),
     // otherwise use explicit option/computed default.
     const initialThemeName = requestedThemeName ?? monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
-    themeTrace('createEditor initialThemeName', {
-      initialThemeName,
-      requestedThemeName,
-      optionTheme: monacoOptions.theme,
-      globalRequestedThemeName,
-      computedTheme: currentTheme.value,
-      lastAppliedTheme,
-    })
     await ensureThemeRegistered(initialThemeName)
 
     editorMgr = new EditorManager(
@@ -434,7 +392,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     )
     editorView = await editorMgr.createEditor(container, code, language, initialThemeName)
     lastAppliedTheme = initialThemeName
-    themeTrace('createEditor done', { initialThemeName, lastAppliedTheme, requestedThemeName })
 
     // If updateCode was called while createEditor was awaiting theme registration,
     // apply the latest queued update once the editor is ready.
@@ -483,19 +440,10 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     }
 
     const initialThemeName = requestedThemeName ?? monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
-    themeTrace('createDiffEditor initialThemeName', {
-      initialThemeName,
-      requestedThemeName,
-      optionTheme: monacoOptions.theme,
-      globalRequestedThemeName,
-      computedTheme: currentTheme.value,
-      lastAppliedTheme,
-    })
     await ensureThemeRegistered(initialThemeName)
     try {
       monaco.editor.setTheme(initialThemeName)
       lastAppliedTheme = initialThemeName
-      themeTrace('createDiffEditor applied initial theme', { initialThemeName, lastAppliedTheme })
     }
     catch {
       // ignore

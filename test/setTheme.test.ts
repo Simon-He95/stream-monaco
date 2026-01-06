@@ -21,6 +21,8 @@ vi.mock('../src/monaco-shim', () => {
 
 describe('setTheme behavior', () => {
   beforeEach(() => {
+    // src/index.ts keeps theme state at module scope; isolate each test.
+    vi.resetModules()
     vi.clearAllMocks()
   })
 
@@ -49,6 +51,20 @@ describe('setTheme behavior', () => {
     // force reapplication
     await setTheme('vitesse-dark', true)
     expect((monaco.editor.setTheme as any).mock.calls.length).toBe(2)
+  })
+
+  it('should not no-op when another instance changed the global theme', async () => {
+    const monaco = await import('../src/monaco-shim')
+    const mod = await import('../src/index')
+
+    const a = mod.useMonaco({ themes: ['vitesse-dark', 'vitesse-light'] })
+    const b = mod.useMonaco({ themes: ['vitesse-dark', 'vitesse-light'] })
+
+    await a.setTheme('vitesse-dark')
+    await b.setTheme('vitesse-light')
+    await a.setTheme('vitesse-dark')
+
+    expect((monaco.editor.setTheme as any).mock.calls.length).toBe(3)
   })
 
   it('auto-loads missing shiki theme when highlighter is cached', async () => {
