@@ -153,8 +153,10 @@ export async function registerMonacoThemes(
     shikiToMonaco(highlighter, monaco)
 
     themesRegistered = true
-    currentThemes = themes
-    currentLanguages = languages
+    // Copy inputs so later in-place mutations from consumers don't trick our
+    // shallow equality check (arraysEqual short-circuits on reference equality).
+    currentThemes = themes.slice()
+    currentLanguages = languages.slice()
     return highlighter
   })()
 

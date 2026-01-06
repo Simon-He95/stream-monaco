@@ -250,6 +250,14 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     }
   }
 
+  async function ensureThemeRegistered(themeName: string) {
+    const availableNames = themes.map(t => (typeof t === 'string' ? t : (t as any).name))
+    const list = availableNames.includes(themeName) ? themes : (themes.concat(themeName) as any)
+    const p = setThemeRegisterPromise(registerMonacoThemes(list as any, languages))
+    if (p)
+      await p
+  }
+
   // height management is handled within EditorManager/DiffEditorManager
 
   // 检查是否出现垂直滚动条
@@ -311,11 +319,9 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         disposals.push(...ds)
     }
 
-    await setThemeRegisterPromise(registerMonacoThemes(themes, languages))
-
     // Determine initial theme: prefer explicit option, otherwise use computed
     const initialThemeName = monacoOptions.theme ?? currentTheme.value
-    lastAppliedTheme = initialThemeName
+    await ensureThemeRegistered(initialThemeName)
 
     editorMgr = new EditorManager(
       monacoOptions,
@@ -328,6 +334,15 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       monacoOptions.revealDebounceMs,
     )
     editorView = await editorMgr.createEditor(container, code, language, initialThemeName)
+    lastAppliedTheme = initialThemeName
+
+    // If updateCode was called while createEditor was awaiting theme registration,
+    // apply the latest queued update once the editor is ready.
+    if (pendingUpdate && editorMgr) {
+      const { code: queuedCode, lang: queuedLang } = pendingUpdate
+      pendingUpdate = null
+      editorMgr.updateCode(queuedCode, queuedLang)
+    }
 
     if (typeof monacoOptions.onThemeChange === 'function') {
       monacoOptions.onThemeChange(initialThemeName as any)
@@ -367,9 +382,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         disposals.push(...ds)
     }
 
-    await setThemeRegisterPromise(registerMonacoThemes(themes, languages))
-
     const initialThemeName = monacoOptions.theme ?? currentTheme.value
+    await ensureThemeRegistered(initialThemeName)
     try {
       monaco.editor.setTheme(initialThemeName)
       lastAppliedTheme = initialThemeName
