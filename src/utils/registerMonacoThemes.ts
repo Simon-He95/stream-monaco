@@ -10,6 +10,16 @@ let currentThemes: (ThemeInput | string | SpecialTheme)[] = []
 let currentLanguages: string[] = []
 // promise that resolves to a shiki highlighter or null when registration completes
 let themeRegisterPromise: Promise<import('../type').ShikiHighlighter | null> | null = null
+
+// Serialize registrations to avoid races where multiple calls patch Monaco's
+// global `editor.setTheme` with different highlighters in an interleaved order.
+let registrationQueue: Promise<unknown> = Promise.resolve()
+function enqueueRegistration<T>(task: () => Promise<T>): Promise<T> {
+  const next = registrationQueue.then(task, task)
+  // keep queue alive even if a task rejects
+  registrationQueue = next.then(() => undefined, () => undefined)
+  return next
+}
 export function getThemeRegisterPromise() {
   return themeRegisterPromise
 }
@@ -136,39 +146,41 @@ export async function registerMonacoThemes(
   themes: (ThemeInput | string | SpecialTheme)[],
   languages: string[],
 ): Promise<import('../type').ShikiHighlighter | null> {
-  registerMonacoLanguages(languages)
+  return enqueueRegistration(async () => {
+    registerMonacoLanguages(languages)
 
-  if (
-    themesRegistered
-    && arraysEqual(themes, currentThemes)
-    && arraysEqual(languages, currentLanguages)
-  ) {
-    // return existing highlighter if available
-    const existing = highlighterCache.get(serializeThemes(themes))
-    return existing ? existing.promise : Promise.resolve(null)
-  }
+    if (
+      themesRegistered
+      && arraysEqual(themes, currentThemes)
+      && arraysEqual(languages, currentLanguages)
+    ) {
+      // return existing highlighter if available
+      const existing = highlighterCache.get(serializeThemes(themes))
+      return existing ? existing.promise : Promise.resolve(null)
+    }
 
-  const p = (async () => {
-    const highlighter = await getOrCreateHighlighter(themes, languages)
-    shikiToMonaco(highlighter, monaco)
+    const p = (async () => {
+      const highlighter = await getOrCreateHighlighter(themes, languages)
+      shikiToMonaco(highlighter, monaco)
 
-    themesRegistered = true
-    // Copy inputs so later in-place mutations from consumers don't trick our
-    // shallow equality check (arraysEqual short-circuits on reference equality).
-    currentThemes = themes.slice()
-    currentLanguages = languages.slice()
-    return highlighter
-  })()
+      themesRegistered = true
+      // Copy inputs so later in-place mutations from consumers don't trick our
+      // shallow equality check (arraysEqual short-circuits on reference equality).
+      currentThemes = themes.slice()
+      currentLanguages = languages.slice()
+      return highlighter
+    })()
 
-  setThemeRegisterPromise(p)
-  try {
-    const res = await p
-    return res
-  }
-  catch (e) {
-    setThemeRegisterPromise(null)
-    throw e
-  }
+    setThemeRegisterPromise(p)
+    try {
+      const res = await p
+      return res
+    }
+    catch (e) {
+      setThemeRegisterPromise(null)
+      throw e
+    }
+  })
 }
 
 function registerMonacoLanguages(languages: string[]) {
