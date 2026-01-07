@@ -473,6 +473,7 @@ cleanupEditor()
 ### Troubleshooting
 
 - Editor invisible after build: configure Monaco web workers correctly.
+- Diff editor renders blank during early mount/streaming: ensure Monaco workers are configured before `createEditor`/`createDiffEditor` (e.g. call `preloadMonacoWorkers()` as early as possible).
 - Theme not applied: ensure theme name is included in `themes`.
 - Language highlighting missing: ensure the language is included and supported by Shiki.
 

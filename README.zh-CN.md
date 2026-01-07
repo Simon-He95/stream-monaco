@@ -720,11 +720,15 @@ onUnmounted(() => {
 
 确保正确配置了 Monaco Editor 的 Web Workers（参考上面的 Vite/Webpack 配置）。
 
-#### 2. 主题不生效
+#### 2. Diff 编辑器流式更新时内容区空白
+
+确保在调用 `createEditor` / `createDiffEditor` 之前已正确配置 Monaco 的 workers（建议尽早调用 `preloadMonacoWorkers()`）。
+
+#### 3. 主题不生效
 
 检查主题名称是否正确，确保主题已在 `themes` 数组中注册。
 
-#### 3. 语言高亮不工作
+#### 4. 语言高亮不工作
 
 确保语言已在 `languages` 数组中包含，并且 Shiki 支持该语言。
 

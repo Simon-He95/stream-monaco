@@ -65,6 +65,7 @@
     "start": "esno src/index.ts",
     "bench": "node scripts/stream-benchmark.mjs",
     "bench:playwright": "node scripts/playwright-bench.mjs",
+    "smoke:diff": "node scripts/playwright-diff-smoke.mjs",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },

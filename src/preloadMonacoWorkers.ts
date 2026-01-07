@@ -48,6 +48,24 @@ export async function preloadMonacoWorkers(): Promise<void> {
     javascript: workerUrlTs,
   }
 
+  // IMPORTANT: set MonacoEnvironment synchronously (before the first `await`).
+  // Many consumers call `preloadMonacoWorkers()` without awaiting it. If we
+  // only set MonacoEnvironment after async prefetching, Monaco may attempt to
+  // create workers before the hook is installed, which can lead to blank /
+  // non-rendering editors (especially for DiffEditor).
+  try {
+    // eslint-disable-next-line no-restricted-globals
+    ;(self as any).MonacoEnvironment = {
+      getWorker(_: any, label: string) {
+        const url = workerUrlByLabel[label] ?? workerUrlEditor
+        return new Worker(url, { type: 'module' })
+      },
+    }
+  }
+  catch {
+    // ignore - best effort
+  }
+
   try {
     // best-effort fetch to warm caches; do not throw on individual failures
     await Promise.all(
@@ -57,14 +75,6 @@ export async function preloadMonacoWorkers(): Promise<void> {
         ),
       ),
     )
-
-    // eslint-disable-next-line no-restricted-globals
-    ; (self as any).MonacoEnvironment = {
-      getWorker(_: any, label: string) {
-        const url = workerUrlByLabel[label] ?? workerUrlEditor
-        return new Worker(url, { type: 'module' })
-      },
-    }
   }
   catch {
     // swallow errors - preloading is best-effort

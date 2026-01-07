@@ -493,11 +493,11 @@ export class DiffEditorManager {
     }
 
     if (modifiedCode !== prevM && modifiedCode.startsWith(prevM)) {
-      const prevLine = this.modifiedModel.getLineCount()
-      this.appendToModel(this.modifiedModel, modifiedCode.slice(prevM.length))
+      // Buffer micro-appends so per-character streaming doesn't spam applyEdits
+      // (which can starve rendering and diff computation).
+      this.appendModified(modifiedCode.slice(prevM.length))
       this.lastKnownModifiedCode = modifiedCode
       didImmediate = true
-      this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), prevLine)
     }
 
     if (originalCode !== this.lastKnownOriginalCode || modifiedCode !== this.lastKnownModifiedCode) {
@@ -540,13 +540,17 @@ export class DiffEditorManager {
     const prev = this.lastKnownModifiedCode ?? this.modifiedModel.getValue()
     if (prev === newCode)
       return
-    const prevLine = this.modifiedModel.getLineCount()
     if (newCode.startsWith(prev) && prev.length < newCode.length) {
-      this.appendToModel(this.modifiedModel, newCode.slice(prev.length))
-      this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), prevLine)
+      // Prefer the buffered append path for streaming.
+      this.appendModified(newCode.slice(prev.length), codeLanguage)
     }
     else {
-      this.applyMinimalEditToModel(this.modifiedModel, prev, newCode)
+      // If we have buffered appends, apply them first so the model matches the
+      // optimistic lastKnownModifiedCode before computing a minimal edit.
+      this.flushModifiedAppendBufferSync()
+      const prevAfterFlush = this.modifiedModel.getValue()
+      const prevLine = this.modifiedModel.getLineCount()
+      this.applyMinimalEditToModel(this.modifiedModel, prevAfterFlush, newCode)
       const newLine = this.modifiedModel.getLineCount()
       if (newLine !== prevLine) {
         const shouldImmediate = this.shouldPerformImmediateRevealDiff()
@@ -693,6 +697,9 @@ export class DiffEditorManager {
   safeClean() {
     this.rafScheduler.cancel('diff')
     this.pendingDiffUpdate = null
+    this.rafScheduler.cancel('appendDiff')
+    this.appendBufferDiffScheduled = false
+    this.appendBufferDiff.length = 0
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -754,6 +761,11 @@ export class DiffEditorManager {
     const { original, modified, lang } = this.pendingDiffUpdate
     this.pendingDiffUpdate = null
 
+    // Ensure the modified model matches any buffered streaming appends before
+    // applying minimal edits or non-prefix updates, otherwise ranges can be
+    // computed against optimistic state and applied to a shorter model.
+    this.flushModifiedAppendBufferSync()
+
     if (lang) {
       const plang = processedLanguage(lang)
       if (plang) {
@@ -780,23 +792,7 @@ export class DiffEditorManager {
       this.lastKnownOriginalCode = original
     }
 
-    // If we have buffered appends for the modified side that haven't been
-    // flushed yet, prefer the authoritative model value plus any buffered
-    // suffix rather than the optimistic `lastKnownModifiedCode` which may
-    // already include unflushed suffixes. Concatenating the buffer here
-    // ensures we don't treat buffered-but-unapplied content as "missing"
-    // and then append it again, which would duplicate text.
-    let prevM: string = this.lastKnownModifiedCode!
-    const buffered = this.appendBufferDiff.length > 0 ? this.appendBufferDiff.join('') : ''
-    if (this.appendBufferDiff.length > 0) {
-      try {
-        prevM = m.getValue() + buffered
-        this.lastKnownModifiedCode = prevM
-      }
-      catch {
-        prevM = (this.lastKnownModifiedCode ?? '') + buffered
-      }
-    }
+    const prevM = m.getValue()
     const prevMLineCount = m.getLineCount()
     if (prevM !== modified) {
       if (modified.startsWith(prevM) && prevM.length < modified.length) {
@@ -824,6 +820,21 @@ export class DiffEditorManager {
         }
       }
     }
+  }
+
+  private flushModifiedAppendBufferSync() {
+    if (!this.modifiedModel)
+      return
+    if (this.appendBufferDiff.length === 0)
+      return
+    // Prevent a scheduled async flush from applying the same content later.
+    this.rafScheduler.cancel('appendDiff')
+    this.appendBufferDiffScheduled = false
+    const text = this.appendBufferDiff.join('')
+    this.appendBufferDiff.length = 0
+    if (!text)
+      return
+    this.appendToModel(this.modifiedModel, text)
   }
 
   private async flushAppendBufferDiff() {
