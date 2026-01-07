@@ -351,6 +351,19 @@ export interface MonacoOptions
    * - Default (library): 50
    */
   updateThrottleMs?: number
+
+  /**
+   * Time window (ms) used to throttle diff streaming updates in addition to RAF batching.
+   * This affects `appendOriginal`/`appendModified` and the fast-path append branches of `updateDiff`.
+   *
+   * Why: Monaco's diff computation is async and cancels/restarts when models change.
+   * If you apply edits every frame (or per token), the diff may only finish once
+   * streaming stops, so the highlights appear "at the end".
+   *
+   * - 0 means only RAF-based coalescing (more responsive, but can starve diff computation).
+   * - Default (library): 50
+   */
+  diffUpdateThrottleMs?: number
   /**
    * When attempting the "minimal edit" algorithm, if prev.length + next.length
    * exceeds this number the library will fall back to full `setValue` to avoid

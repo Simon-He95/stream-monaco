@@ -60,8 +60,12 @@ export class DiffEditorManager {
   private readonly scrollWatcherSuppressionMs = 500
   private diffScrollWatcherSuppressionTimer: number | null = null
 
-  private appendBufferDiff: string[] = []
+  private appendBufferOriginalDiff: string[] = []
+  private appendBufferModifiedDiff: string[] = []
   private appendBufferDiffScheduled = false
+  private diffUpdateThrottleMs = 50
+  private lastAppendFlushTimeDiff = 0
+  private appendFlushThrottleTimerDiff: number | null = null
 
   private rafScheduler = createRafScheduler()
   private diffHeightManager: ReturnType<typeof createHeightManager> | null = null
@@ -76,7 +80,55 @@ export class DiffEditorManager {
     private autoScrollThresholdLines: number,
     private diffAutoScroll: boolean,
     private revealDebounceMsOption?: number,
+    diffUpdateThrottleMsOption?: number,
   ) { }
+
+  private scheduleFlushAppendBufferDiff() {
+    if (this.appendBufferDiffScheduled)
+      return
+    this.appendBufferDiffScheduled = true
+
+    const schedule = () => {
+      this.rafScheduler.schedule('appendDiff', () => this.flushAppendBufferDiff())
+    }
+
+    // 0 => pure RAF batching (legacy behavior)
+    const throttle = this.diffUpdateThrottleMs
+    if (!throttle) {
+      schedule()
+      return
+    }
+
+    const now = Date.now()
+    const since = now - this.lastAppendFlushTimeDiff
+    if (since >= throttle) {
+      schedule()
+      return
+    }
+
+    if (this.appendFlushThrottleTimerDiff != null)
+      return
+    const wait = throttle - since
+    this.appendFlushThrottleTimerDiff = (setTimeout(() => {
+      this.appendFlushThrottleTimerDiff = null
+      schedule()
+    }, wait) as unknown) as number
+  }
+
+  private flushOriginalAppendBufferSync() {
+    if (!this.originalModel)
+      return
+    if (this.appendBufferOriginalDiff.length === 0)
+      return
+    // Prevent a scheduled async flush from applying the same content later.
+    this.rafScheduler.cancel('appendDiff')
+    this.appendBufferDiffScheduled = false
+    const text = this.appendBufferOriginalDiff.join('')
+    this.appendBufferOriginalDiff.length = 0
+    if (!text)
+      return
+    this.appendToModel(this.originalModel, text)
+  }
 
   private computedHeight(): number {
     if (!this.diffEditorView)
@@ -359,6 +411,11 @@ export class DiffEditorManager {
     this.lastKnownOriginalCode = originalCode
     this.lastKnownModifiedCode = modifiedCode
 
+    // Default to 50ms throttling for diff streaming updates, unless overridden.
+    // This helps the diff worker complete intermediate computations so highlights
+    // can appear progressively during streaming.
+    this.diffUpdateThrottleMs = (this.options as any).diffUpdateThrottleMs ?? 50
+
     this.shouldAutoScrollDiff = !!(this.autoScrollInitial && this.diffAutoScroll)
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -487,7 +544,9 @@ export class DiffEditorManager {
     let didImmediate = false
 
     if (originalCode !== prevO && originalCode.startsWith(prevO)) {
-      this.appendToModel(this.originalModel, originalCode.slice(prevO.length))
+      // Buffer streaming appends so diff computation can keep up and update
+      // highlights progressively.
+      this.appendOriginal(originalCode.slice(prevO.length))
       this.lastKnownOriginalCode = originalCode
       didImmediate = true
     }
@@ -521,9 +580,10 @@ export class DiffEditorManager {
     if (prev === newCode)
       return
     if (newCode.startsWith(prev) && prev.length < newCode.length) {
-      this.appendToModel(this.originalModel, newCode.slice(prev.length))
+      this.appendOriginal(newCode.slice(prev.length), codeLanguage)
     }
     else {
+      this.flushOriginalAppendBufferSync()
       this.applyMinimalEditToModel(this.originalModel, prev, newCode)
     }
     this.lastKnownOriginalCode = newCode
@@ -600,8 +660,9 @@ export class DiffEditorManager {
       if (lang && this.originalModel.getLanguageId() !== lang)
         monaco.editor.setModelLanguage(this.originalModel, lang)
     }
-    this.appendToModel(this.originalModel, appendText)
-    this.lastKnownOriginalCode = this.originalModel.getValue()
+    // Buffer-only; actual edit is applied in flushAppendBufferDiff
+    this.appendBufferOriginalDiff.push(appendText)
+    this.scheduleFlushAppendBufferDiff()
   }
 
   appendModified(appendText: string, codeLanguage?: string) {
@@ -613,11 +674,8 @@ export class DiffEditorManager {
         monaco.editor.setModelLanguage(this.modifiedModel, lang)
     }
     // Buffer-only; actual edit is applied in flushAppendBufferDiff
-    this.appendBufferDiff.push(appendText)
-    if (!this.appendBufferDiffScheduled) {
-      this.appendBufferDiffScheduled = true
-      this.rafScheduler.schedule('appendDiff', () => this.flushAppendBufferDiff())
-    }
+    this.appendBufferModifiedDiff.push(appendText)
+    this.scheduleFlushAppendBufferDiff()
   }
 
   setLanguage(language: MonacoLanguage, languages: MonacoLanguage[]) {
@@ -644,7 +702,12 @@ export class DiffEditorManager {
     this.pendingDiffUpdate = null
     this.rafScheduler.cancel('appendDiff')
     this.appendBufferDiffScheduled = false
-    this.appendBufferDiff.length = 0
+    this.appendBufferOriginalDiff.length = 0
+    this.appendBufferModifiedDiff.length = 0
+    if (this.appendFlushThrottleTimerDiff != null) {
+      clearTimeout(this.appendFlushThrottleTimerDiff)
+      this.appendFlushThrottleTimerDiff = null
+    }
     this.rafScheduler.cancel('content-size-change-diff')
     this.rafScheduler.cancel('sync-last-known-modified')
 
@@ -699,7 +762,12 @@ export class DiffEditorManager {
     this.pendingDiffUpdate = null
     this.rafScheduler.cancel('appendDiff')
     this.appendBufferDiffScheduled = false
-    this.appendBufferDiff.length = 0
+    this.appendBufferOriginalDiff.length = 0
+    this.appendBufferModifiedDiff.length = 0
+    if (this.appendFlushThrottleTimerDiff != null) {
+      clearTimeout(this.appendFlushThrottleTimerDiff)
+      this.appendFlushThrottleTimerDiff = null
+    }
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -761,9 +829,10 @@ export class DiffEditorManager {
     const { original, modified, lang } = this.pendingDiffUpdate
     this.pendingDiffUpdate = null
 
-    // Ensure the modified model matches any buffered streaming appends before
-    // applying minimal edits or non-prefix updates, otherwise ranges can be
-    // computed against optimistic state and applied to a shorter model.
+    // Ensure models match any buffered streaming appends before applying minimal
+    // edits or non-prefix updates, otherwise ranges can be computed against an
+    // optimistic state and applied to a shorter model.
+    this.flushOriginalAppendBufferSync()
     this.flushModifiedAppendBufferSync()
 
     if (lang) {
@@ -825,13 +894,13 @@ export class DiffEditorManager {
   private flushModifiedAppendBufferSync() {
     if (!this.modifiedModel)
       return
-    if (this.appendBufferDiff.length === 0)
+    if (this.appendBufferModifiedDiff.length === 0)
       return
     // Prevent a scheduled async flush from applying the same content later.
     this.rafScheduler.cancel('appendDiff')
     this.appendBufferDiffScheduled = false
-    const text = this.appendBufferDiff.join('')
-    this.appendBufferDiff.length = 0
+    const text = this.appendBufferModifiedDiff.join('')
+    this.appendBufferModifiedDiff.length = 0
     if (!text)
       return
     this.appendToModel(this.modifiedModel, text)
@@ -840,16 +909,26 @@ export class DiffEditorManager {
   private async flushAppendBufferDiff() {
     if (!this.diffEditorView)
       return
-    if (this.appendBufferDiff.length === 0)
+    if (this.appendBufferOriginalDiff.length === 0 && this.appendBufferModifiedDiff.length === 0)
       return
+    this.lastAppendFlushTimeDiff = Date.now()
     this.appendBufferDiffScheduled = false
+
+    // Apply original-side buffered appends first (no scroll logic needed).
+    if (this.originalModel && this.appendBufferOriginalDiff.length > 0) {
+      const oText = this.appendBufferOriginalDiff.join('')
+      this.appendBufferOriginalDiff.length = 0
+      if (oText)
+        this.appendToModel(this.originalModel, oText)
+    }
+
     const me = this.diffEditorView.getModifiedEditor()
     const model = me.getModel()
     if (!model) {
-      this.appendBufferDiff.length = 0
+      this.appendBufferModifiedDiff.length = 0
       return
     }
-    let parts = this.appendBufferDiff.splice(0)
+    let parts = this.appendBufferModifiedDiff.splice(0)
     // If the buffered append is large, apply it in smaller sequential chunks
     // with a RAF pause between each so the editor can render and auto-scroll
     // progressively instead of jumping once all data is applied.
@@ -934,7 +1013,7 @@ export class DiffEditorManager {
     }
 
     const text = totalText
-    this.appendBufferDiff.length = 0
+    this.appendBufferModifiedDiff.length = 0
     prevLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(prevLine)
     const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)

@@ -80,6 +80,13 @@ The `useMonaco()` function returns an object with the following methods:
 - **`setUpdateThrottleMs(ms)`** - Change update throttle at runtime
 - **`getUpdateThrottleMs()`** - Get current throttle value
 
+#### Diff streaming highlight tip
+
+Monaco's diff computation is async and cancels/restarts when models change. If you stream updates too frequently (e.g. per token / every frame), the diff may only finish once streaming stops, so the difference highlights appear "at the end".
+
+- Set `diffUpdateThrottleMs` (default: 50) to let the diff worker complete intermediate computations during streaming.
+- Set it to `0` to restore pure RAF batching (most responsive, but may delay diff highlights under heavy streaming).
+
 ### Install
 
 ```bash

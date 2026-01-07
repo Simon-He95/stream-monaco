@@ -455,6 +455,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       autoScrollThresholdLines,
       diffAutoScroll,
       monacoOptions.revealDebounceMs,
+      (monacoOptions as any).diffUpdateThrottleMs,
     )
     diffEditorView = await diffMgr.createDiffEditor(container, originalCode, modifiedCode, language, initialThemeName)
 
