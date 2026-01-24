@@ -35,6 +35,10 @@
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./legacy": {
+      "import": "./dist/index.legacy.js",
+      "require": "./dist/index.legacy.cjs"
     }
   },
   "main": "./dist/index.js",
@@ -52,7 +56,11 @@
     "run": "cli.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "legacy.cjs",
+    "legacy.d.cts",
+    "legacy.d.ts",
+    "legacy.js"
   ],
   "scripts": {
     "build": "tsdown",

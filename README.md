@@ -484,6 +484,40 @@ cleanupEditor()
 - Theme not applied: ensure theme name is included in `themes`.
 - Language highlighting missing: ensure the language is included and supported by Shiki.
 
+#### Vue CLI 4 (Webpack 4)
+
+Webpack 4 cannot parse `import.meta.url`. Use the `stream-monaco/legacy` entry (no `import.meta`) and configure Monaco workers in your app.
+
+Recommended: use `monaco-editor-webpack-plugin`.
+
+```bash
+pnpm add -D monaco-editor-webpack-plugin
+```
+
+`vue.config.js`:
+
+```js
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin')
+
+module.exports = {
+  configureWebpack: {
+    plugins: [
+      new MonacoWebpackPlugin({
+        languages: ['json', 'css', 'html', 'typescript'],
+      }),
+    ],
+  },
+}
+```
+
+And call once early (e.g. `main.ts`):
+
+```ts
+import { preloadMonacoWorkers } from 'stream-monaco/legacy'
+
+preloadMonacoWorkers()
+```
+
 ### Development
 
 ```bash

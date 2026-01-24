@@ -80,7 +80,6 @@ export class DiffEditorManager {
     private autoScrollThresholdLines: number,
     private diffAutoScroll: boolean,
     private revealDebounceMsOption?: number,
-    diffUpdateThrottleMsOption?: number,
   ) { }
 
   private scheduleFlushAppendBufferDiff() {

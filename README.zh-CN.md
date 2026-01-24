@@ -718,7 +718,39 @@ onUnmounted(() => {
 
 #### 1. 打包后编辑器无法显示
 
-确保正确配置了 Monaco Editor 的 Web Workers（参考上面的 Vite/Webpack 配置）。
+确保正确配置了 Monaco Editor 的 Web Workers。
+
+**Vue CLI 4（Webpack 4）注意：** Webpack 4 无法解析 `import.meta.url`。请改用 `stream-monaco/legacy` 入口（不包含 `import.meta`），并在项目侧配置 Monaco workers。
+
+推荐使用 `monaco-editor-webpack-plugin` 来处理 Monaco workers：
+
+```bash
+pnpm add -D monaco-editor-webpack-plugin
+```
+
+`vue.config.js`：
+
+```js
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin')
+
+module.exports = {
+  configureWebpack: {
+    plugins: [
+      new MonacoWebpackPlugin({
+        languages: ['json', 'css', 'html', 'typescript'],
+      }),
+    ],
+  },
+}
+```
+
+并尽早调用一次（例如 `main.ts`）：
+
+```ts
+import { preloadMonacoWorkers } from 'stream-monaco/legacy'
+
+preloadMonacoWorkers()
+```
 
 #### 2. Diff 编辑器流式更新时内容区空白
 
