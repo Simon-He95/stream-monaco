@@ -1,11 +1,17 @@
 import { workerPathByLabel } from './preloadMonacoWorkers.shared'
+import { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
 
 // Webpack 4 (Vue CLI 4) cannot parse `import.meta.url`. This legacy build
-// assumes the host app configures Monaco workers (e.g. via
-// monaco-editor-webpack-plugin or a manual MonacoEnvironment.getWorkerUrl).
+// relies on the host app configuring Monaco workers (e.g. via
+// monaco-editor-webpack-plugin), but includes a best-effort auto-config for
+// CDN/AMD setups.
 export async function preloadMonacoWorkers(): Promise<void> {
   if (typeof window === 'undefined' || typeof document === 'undefined')
     return
+
+  // Best-effort: if the host app didn't configure workers, try to install a
+  // same-origin blob worker URL based on detected Monaco baseUrl.
+  ensureMonacoWorkersLegacy()
 
   // eslint-disable-next-line no-restricted-globals
   const env = (self as any).MonacoEnvironment as

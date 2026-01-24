@@ -518,6 +518,14 @@ import { preloadMonacoWorkers } from 'stream-monaco/legacy'
 preloadMonacoWorkers()
 ```
 
+If you load Monaco via CDN/AMD (e.g. `<script src=".../vs/loader.js">`), `stream-monaco/legacy` also includes a best-effort auto worker setup that creates a same-origin `blob:` worker and `importScripts()` Monaco’s `vs/base/worker/workerMain.js`. If auto-detection can’t find your Monaco base URL, call:
+
+```ts
+import { ensureMonacoWorkersLegacy } from 'stream-monaco/legacy'
+
+ensureMonacoWorkersLegacy({ baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/' })
+```
+
 ### Development
 
 ```bash
