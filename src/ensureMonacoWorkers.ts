@@ -33,4 +33,3 @@ export function ensureMonacoWorkers(): void {
     // ignore - best effort
   }
 }
-

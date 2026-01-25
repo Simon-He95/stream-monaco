@@ -1,11 +1,18 @@
-export * from './index.base'
-export { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
-export { preloadMonacoWorkers } from './preloadMonacoWorkers.legacy'
+import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp'
+// Eagerly register Monarch tokenizers as a robust fallback. The basic-languages
+// contributions use lazy dynamic imports which can fail in some legacy bundler
+// setups (Webpack 4), resulting in a single default token type (no colors).
+import { conf as jsConf, language as jsLanguage } from 'monaco-editor/esm/vs/basic-languages/javascript/javascript'
+import { conf as psConf, language as psLanguage } from 'monaco-editor/esm/vs/basic-languages/powershell/powershell'
 
-import { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
+import { conf as pyConf, language as pyLanguage } from 'monaco-editor/esm/vs/basic-languages/python/python'
+import { conf as shConf, language as shLanguage } from 'monaco-editor/esm/vs/basic-languages/shell/shell'
+import { conf as tsConf, language as tsLanguage } from 'monaco-editor/esm/vs/basic-languages/typescript/typescript'
+import { IOutlineModelService } from 'monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/outlineModel'
+import { ISuggestMemoryService } from 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestMemory'
 import { processedLanguage } from './code.detect'
+import { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
 import * as monaco from './monaco-shim'
-
 // Force Monaco's built-in tokenizers to be registered in legacy (Webpack 4)
 // builds. Without these contributions, Monaco falls back to a single default
 // token type (no colors) when Shiki providers fail to install.
@@ -13,24 +20,17 @@ import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution'
 import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution'
 import 'monaco-editor/esm/vs/basic-languages/python/python.contribution'
 import 'monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution'
+
 import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution'
 import 'monaco-editor/esm/vs/basic-languages/powershell/powershell.contribution'
 import 'monaco-editor/esm/vs/language/json/monaco.contribution'
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution'
 import 'monaco-editor/esm/vs/language/html/monaco.contribution'
 import 'monaco-editor/esm/vs/language/css/monaco.contribution'
-import { ISuggestMemoryService } from 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestMemory'
-import { IOutlineModelService } from 'monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/outlineModel'
 
-// Eagerly register Monarch tokenizers as a robust fallback. The basic-languages
-// contributions use lazy dynamic imports which can fail in some legacy bundler
-// setups (Webpack 4), resulting in a single default token type (no colors).
-import { conf as jsConf, language as jsLanguage } from 'monaco-editor/esm/vs/basic-languages/javascript/javascript'
-import { conf as tsConf, language as tsLanguage } from 'monaco-editor/esm/vs/basic-languages/typescript/typescript'
-import { conf as pyConf, language as pyLanguage } from 'monaco-editor/esm/vs/basic-languages/python/python'
-import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp'
-import { conf as shConf, language as shLanguage } from 'monaco-editor/esm/vs/basic-languages/shell/shell'
-import { conf as psConf, language as psLanguage } from 'monaco-editor/esm/vs/basic-languages/powershell/powershell'
+export { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
+export * from './index.base'
+export { preloadMonacoWorkers } from './preloadMonacoWorkers.legacy'
 
 const LEGACY_ONIG_INIT_KEY = '__streamMonacoLegacyOnigurumaInit__'
 const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'

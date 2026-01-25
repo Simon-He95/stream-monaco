@@ -1,7 +1,7 @@
+import { ensureMonacoWorkers } from './ensureMonacoWorkers'
 // Expose a function so consumers can proactively preload worker loaders
 // without relying on module evaluation timing.
 import { uniqueWorkerPaths } from './preloadMonacoWorkers.shared'
-import { ensureMonacoWorkers } from './ensureMonacoWorkers'
 
 export async function preloadMonacoWorkers(): Promise<void> {
   if (typeof window === 'undefined' || typeof document === 'undefined')

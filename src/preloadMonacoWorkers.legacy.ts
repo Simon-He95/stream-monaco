@@ -1,5 +1,5 @@
-import { workerPathByLabel } from './preloadMonacoWorkers.shared'
 import { ensureMonacoWorkersLegacy } from './ensureMonacoWorkers.legacy'
+import { workerPathByLabel } from './preloadMonacoWorkers.shared'
 
 // Webpack 4 (Vue CLI 4) cannot parse `import.meta.url`. This legacy build
 // relies on the host app configuring Monaco workers (e.g. via

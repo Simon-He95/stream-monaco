@@ -28,7 +28,7 @@ function detectMonacoBaseUrlFromScripts(): string | undefined {
     if (!src)
       continue
 
-    const loaderMatch = src.match(/^(.*)\/vs\/loader\.js(?:\\?.*)?$/)
+    const loaderMatch = src.match(/^(.*)\/vs\/loader\.js.*$/)
     if (loaderMatch)
       return normalizeBaseUrl(loaderMatch[1])
 
@@ -146,18 +146,17 @@ export function ensureMonacoWorkersLegacy(options?: { baseUrl?: string }): void 
       return
     }
 
-    const baseUrl =
-      options?.baseUrl
-      ?? detectMonacoBaseUrlFromScripts()
-      ?? detectMonacoBaseUrlFromAmdRequire()
+    const baseUrl
+      = options?.baseUrl
+        ?? detectMonacoBaseUrlFromScripts()
+        ?? detectMonacoBaseUrlFromAmdRequire()
     if (!baseUrl)
       return
 
     const workerUrl = makeWorkerUrl(baseUrl)
-    if (!workerUrl)
+    if (!workerUrl) {
       return
-
-    // eslint-disable-next-line no-restricted-globals
+    }
     ;(self as any).MonacoEnvironment = {
       getWorkerUrl() {
         return workerUrl
