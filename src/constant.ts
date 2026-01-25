@@ -11,6 +11,8 @@ export const defaultLanguages = [
   'cpp',
   'rust',
   'go',
+  'shell',
+  'shellscript',
   'powershell',
   'sql',
   'json',

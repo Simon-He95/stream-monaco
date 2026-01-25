@@ -136,9 +136,18 @@ export function detectLanguage(
 }
 
 export function processedLanguage(language: string) {
+  // Legacy (Webpack 4) fallback: Monaco doesn't ship a built-in `vue` tokenizer.
+  // When Shiki integration is unreliable, mapping to `html` preserves at least
+  // a reasonable highlight for .vue-like blocks.
+  try {
+    if ((globalThis as any)?.__streamMonacoLegacy__ && /^vue$/i.test(language))
+      return 'html'
+  }
+  catch {}
+
   // eslint-disable-next-line regexp/no-dupe-disjunctions
   if (/^(?:shellscript|bash|sh|shell|zsh)/i.test(language))
-    return 'shell'
+    return 'shellscript'
   if (/^(?:powershell|ps1?)/i.test(language))
     return 'powershell'
   return language.split(':')[0]

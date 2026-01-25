@@ -4,6 +4,47 @@ import { createHighlighter } from 'shiki'
 import * as monaco from '../monaco-shim'
 import { arraysEqual } from './arraysEqual'
 
+const LEGACY_ONIG_INIT_KEY = '__streamMonacoLegacyOnigurumaInit__'
+const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'
+const LEGACY_MONACO_LANGS_INIT_KEY = '__streamMonacoLegacyMonacoLangsInit__'
+
+async function awaitLegacyOnigurumaInitIfPresent() {
+  try {
+    const p = (globalThis as any)?.[LEGACY_ONIG_INIT_KEY]
+    if (p && typeof p.then === 'function')
+      await p
+  }
+  catch {}
+}
+
+async function awaitLegacyMonacoLanguageContributionsIfPresent() {
+  try {
+    const p = (globalThis as any)?.[LEGACY_MONACO_LANGS_INIT_KEY]
+    if (p && typeof p.then === 'function')
+      await p
+  }
+  catch {}
+}
+
+async function getLegacyShikiEngineIfPresent() {
+  try {
+    const p = (globalThis as any)?.[LEGACY_ENGINE_KEY]
+    if (p && typeof p.then === 'function')
+      return await p
+  }
+  catch {}
+  return null
+}
+
+async function createHighlighterWithLegacyEngineIfNeeded(options: any) {
+  await awaitLegacyOnigurumaInitIfPresent()
+  await awaitLegacyMonacoLanguageContributionsIfPresent()
+  const engine = await getLegacyShikiEngineIfPresent()
+  if (engine)
+    return createHighlighter({ ...options, engine })
+  return createHighlighter(options)
+}
+
 let languagesRegistered = false
 let currentLanguages: string[] = []
 // promise that resolves to a shiki highlighter or null when registration completes
@@ -43,6 +84,7 @@ const highlighterCache = new Map<string, HighlighterEntry>()
 // load themes/languages into it.
 let monacoHighlighterPromise: Promise<import('../type').ShikiHighlighter> | null = null
 let lastPatchedHighlighter: import('../type').ShikiHighlighter | null = null
+let lastPatchedLanguages = new Set<string>()
 const monacoThemeByKey = new Map<string, ThemeInput | string | SpecialTheme>()
 const monacoLanguageSet = new Set<string>()
 
@@ -64,7 +106,7 @@ async function ensureMonacoHighlighter(
   if (!monacoHighlighterPromise) {
     const initialThemes = Array.from(monacoThemeByKey.values())
     const initialLangs = Array.from(monacoLanguageSet.values())
-    monacoHighlighterPromise = createHighlighter({ themes: initialThemes, langs: initialLangs })
+    monacoHighlighterPromise = createHighlighterWithLegacyEngineIfNeeded({ themes: initialThemes, langs: initialLangs })
       .then(h => h)
   }
 
@@ -112,7 +154,7 @@ async function ensureMonacoHighlighter(
   }
 
   // fallback: recreate shared highlighter with union
-  const p = createHighlighter({ themes: wantsThemes, langs: wantsLangs })
+  const p = createHighlighterWithLegacyEngineIfNeeded({ themes: wantsThemes, langs: wantsLangs })
     .then(hh => hh)
   monacoHighlighterPromise = p
   return p
@@ -186,7 +228,7 @@ async function getOrCreateHighlighter(
     // otherwise create a new highlighter with the union of languages
     const union = new Set<string>([...existing.languages, ...requestedSet])
     const langsArray = Array.from(union)
-    const p = createHighlighter({ themes, langs: langsArray })
+    const p = createHighlighterWithLegacyEngineIfNeeded({ themes, langs: langsArray })
     const newEntry: HighlighterEntry = { promise: p, languages: union }
     highlighterCache.set(key, newEntry)
 
@@ -201,7 +243,7 @@ async function getOrCreateHighlighter(
   }
 
   // no cached entry, create and cache
-  const p = createHighlighter({ themes, langs: Array.from(requestedSet) })
+  const p = createHighlighterWithLegacyEngineIfNeeded({ themes, langs: Array.from(requestedSet) })
   const entry: HighlighterEntry = { promise: p, languages: requestedSet }
   highlighterCache.set(key, entry)
   p.catch(() => {
@@ -234,10 +276,72 @@ export async function registerMonacoThemes(
     const p = (async () => {
       const highlighter = await ensureMonacoHighlighter(themes, languages)
 
-      // Patch Monaco once per shared-highlighter instance.
-      if (lastPatchedHighlighter !== highlighter) {
-        shikiToMonaco(highlighter, monaco)
+      // Patch Monaco when:
+      // - the shared highlighter instance changes, OR
+      // - new languages were added (incremental load) and need tokens providers.
+      //
+      // `shikiToMonaco()` installs tokens providers per language at call-time.
+      // When we incrementally load languages into the shared highlighter, we
+      // must re-run `shikiToMonaco()` so Monaco receives providers for the newly
+      // loaded languages.
+      const wantsLangs = Array.from(monacoLanguageSet.values())
+      const needsLanguagePatch = lastPatchedHighlighter !== highlighter
+        || wantsLangs.some(l => !lastPatchedLanguages.has(l))
+
+      if (needsLanguagePatch) {
+        if (lastPatchedHighlighter !== highlighter)
+          lastPatchedLanguages = new Set<string>()
+
+        // In some bundlers (notably Webpack 4), Shiki/TextMate tokenization can
+        // still throw at runtime (e.g. `null.compileAG`) due to regex engine
+        // initialization quirks. Monaco reports these as "unexpected errors"
+        // and they crash the app.
+        //
+        // We cannot monkey-patch `import * as monaco` namespace exports (ESM
+        // namespace objects are immutable), so pass a proxy object into
+        // `shikiToMonaco()` that wraps `setTokensProvider` instead.
+        const realLanguages: any = (monaco as any).languages
+        const realEditor: any = (monaco as any).editor
+        const setTokensProvider = typeof realLanguages?.setTokensProvider === 'function'
+          ? realLanguages.setTokensProvider.bind(realLanguages)
+          : null
+        const getLanguages = typeof realLanguages?.getLanguages === 'function'
+          ? realLanguages.getLanguages.bind(realLanguages)
+          : null
+
+        const monacoProxy: any = {
+          // Forward everything else (Range, Uri, etc.) via prototype lookup.
+          __proto__: monaco as any,
+          editor: realEditor,
+          languages: {
+            __proto__: realLanguages,
+            getLanguages,
+            setTokensProvider(lang: string, provider: any) {
+              if (provider && typeof provider.tokenize === 'function') {
+                const originalTokenize = provider.tokenize.bind(provider)
+                provider = {
+                  ...provider,
+                  tokenize(line: string, state: any) {
+                    try {
+                      return originalTokenize(line, state)
+                    }
+                    catch {
+                      return {
+                        endState: state,
+                        tokens: [{ startIndex: 0, scopes: '' }],
+                      }
+                    }
+                  },
+                }
+              }
+              return setTokensProvider?.(lang, provider)
+            },
+          },
+        }
+
+        shikiToMonaco(highlighter, monacoProxy)
         lastPatchedHighlighter = highlighter
+        lastPatchedLanguages = new Set(wantsLangs)
       }
 
       // Track last language set for Monaco language registration short-circuit.
