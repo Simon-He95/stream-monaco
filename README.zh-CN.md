@@ -1,10 +1,12 @@
-## stream-monaco
+# stream-monaco
 
 [![NPM version](https://img.shields.io/npm/v/stream-monaco?color=a1b858&label=)](https://www.npmjs.com/package/stream-monaco)
 [![English Docs](https://img.shields.io/badge/docs-English-blue)](README.md)
 [![NPM downloads](https://img.shields.io/npm/dm/stream-monaco)](https://www.npmjs.com/package/stream-monaco)
 [![Bundle size](https://img.shields.io/bundlephobia/minzip/stream-monaco)](https://bundlephobia.com/package/stream-monaco)
 [![License](https://img.shields.io/npm/l/stream-monaco)](./LICENSE)
+
+流式更新版 Monaco Editor + Shiki 语法高亮，提供框架无关内核，适配 Vue、React、Svelte、Solid、Preact 与 Vanilla JS。
 
 ### 项目简介
 

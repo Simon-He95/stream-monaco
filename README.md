@@ -1,10 +1,12 @@
-## stream-monaco
+# stream-monaco
 
 [![NPM version](https://img.shields.io/npm/v/stream-monaco?color=a1b858&label=)](https://www.npmjs.com/package/stream-monaco)
 [![中文版](https://img.shields.io/badge/docs-中文文档-blue)](README.zh-CN.md)
 [![NPM downloads](https://img.shields.io/npm/dm/stream-monaco)](https://www.npmjs.com/package/stream-monaco)
 [![Bundle size](https://img.shields.io/bundlephobia/minzip/stream-monaco)](https://bundlephobia.com/package/stream-monaco)
 [![License](https://img.shields.io/npm/l/stream-monaco)](./LICENSE)
+
+Streaming Monaco Editor integration with Shiki syntax highlighting. Framework-agnostic core for Vue, React, Svelte, Solid, Preact, and Vanilla JS.
 
 ### Introduction
 

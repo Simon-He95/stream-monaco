@@ -157,7 +157,7 @@ export function ensureMonacoWorkersLegacy(options?: { baseUrl?: string }): void 
     if (!workerUrl) {
       return
     }
-    ;(self as any).MonacoEnvironment = {
+    ;(globalThis as any).MonacoEnvironment = {
       getWorkerUrl() {
         return workerUrl
       },
