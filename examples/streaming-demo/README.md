@@ -14,3 +14,9 @@ pnpm -C examples/streaming-demo dev
 ```
 
 Then open http://localhost:5173
+
+Routes:
+
+- `/` Streaming append demo
+- `/diff` Diff streaming stress demo
+- `/diff-ux` Diff UX demo (unchanged-region collapse/expand + hover hunk revert/stage)

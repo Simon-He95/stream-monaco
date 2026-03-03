@@ -18,6 +18,8 @@ const {
   languages: ['markdown', 'typescript'],
   readOnly: true,
   MAX_HEIGHT: 400,
+  diffHideUnchangedRegions: true,
+  diffHunkActionsOnHover: true,
 })
 preloadMonacoWorkers()
 

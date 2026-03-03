@@ -1,4 +1,4 @@
-import type { MonacoLanguage, MonacoOptions } from '../type'
+import type { DiffHunkActionContext, DiffHunkActionKind, DiffHunkSide, MonacoLanguage, MonacoOptions } from '../type'
 import { processedLanguage } from '../code.detect'
 import { defaultRevealBatchOnIdleMs, defaultRevealDebounceMs, defaultScrollbar, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from '../constant'
 import { computeMinimalEdit } from '../minimalEdit'
@@ -8,7 +8,10 @@ import { log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
+type DiffEditorSide = 'original' | 'modified'
+
 export class DiffEditorManager {
+  private static readonly diffHunkStyleId = 'stream-monaco-diff-hunk-style'
   private diffEditorView: monaco.editor.IStandaloneDiffEditor | null = null
   private originalModel: monaco.editor.ITextModel | null = null
   private modifiedModel: monaco.editor.ITextModel | null = null
@@ -69,6 +72,15 @@ export class DiffEditorManager {
 
   private rafScheduler = createRafScheduler()
   private diffHeightManager: ReturnType<typeof createHeightManager> | null = null
+  private diffHunkDisposables: monaco.IDisposable[] = []
+  private diffHunkOverlay: HTMLDivElement | null = null
+  private diffHunkUpperNode: HTMLDivElement | null = null
+  private diffHunkLowerNode: HTMLDivElement | null = null
+  private diffHunkActiveChange: monaco.editor.ILineChange | null = null
+  private diffHunkLineChanges: monaco.editor.ILineChange[] = []
+  private diffHunkFallbackLineChanges: monaco.editor.ILineChange[] = []
+  private diffHunkFallbackVersions: { original: number, modified: number } | null = null
+  private diffHunkHideTimer: number | null = null
 
   constructor(
     private options: MonacoOptions,
@@ -80,7 +92,693 @@ export class DiffEditorManager {
     private autoScrollThresholdLines: number,
     private diffAutoScroll: boolean,
     private revealDebounceMsOption?: number,
+    private diffUpdateThrottleMsOption?: number,
   ) { }
+
+  private resolveDiffHideUnchangedRegionsOption(): NonNullable<monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']> {
+    const normalize = (value: unknown): NonNullable<monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']> => {
+      if (typeof value === 'boolean')
+        return { enabled: value }
+      if (value && typeof value === 'object') {
+        const raw = value as monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']
+        return {
+          enabled: (raw as any).enabled ?? true,
+          ...(raw as object),
+        }
+      }
+      return { enabled: false }
+    }
+
+    const direct = (this.options as monaco.editor.IDiffEditorConstructionOptions).hideUnchangedRegions
+    if (typeof direct !== 'undefined')
+      return normalize(direct)
+
+    const viaOption = this.options.diffHideUnchangedRegions
+    if (typeof viaOption !== 'undefined')
+      return normalize(viaOption)
+
+    return {
+      enabled: true,
+      contextLineCount: 3,
+      minimumLineCount: 3,
+      revealLineCount: 3,
+    }
+  }
+
+  private disposeDiffHunkInteractions() {
+    if (this.diffHunkHideTimer != null) {
+      clearTimeout(this.diffHunkHideTimer)
+      this.diffHunkHideTimer = null
+    }
+    this.diffHunkActiveChange = null
+    this.diffHunkLineChanges = []
+    this.diffHunkFallbackLineChanges = []
+    this.diffHunkFallbackVersions = null
+
+    if (this.diffHunkDisposables.length > 0) {
+      for (const d of this.diffHunkDisposables) {
+        try {
+          d.dispose()
+        }
+        catch { }
+      }
+      this.diffHunkDisposables.length = 0
+    }
+
+    if (this.diffHunkOverlay) {
+      this.diffHunkOverlay.remove()
+      this.diffHunkOverlay = null
+    }
+    this.diffHunkUpperNode = null
+    this.diffHunkLowerNode = null
+  }
+
+  private computeLineChangesFallback(
+    originalModel: monaco.editor.ITextModel,
+    modifiedModel: monaco.editor.ITextModel,
+  ): monaco.editor.ILineChange[] {
+    const original = originalModel.getValue().split(/\r?\n/)
+    const modified = modifiedModel.getValue().split(/\r?\n/)
+    const n = original.length
+    const m = modified.length
+    if (n === 0 && m === 0)
+      return []
+
+    // Bound worst-case CPU/memory for fallback mode.
+    const maxCells = 1_500_000
+    if ((n + 1) * (m + 1) > maxCells) {
+      return originalModel.getValue() === modifiedModel.getValue()
+        ? []
+        : [{
+            originalStartLineNumber: 1,
+            originalEndLineNumber: n,
+            modifiedStartLineNumber: 1,
+            modifiedEndLineNumber: m,
+          }]
+    }
+
+    const cols = m + 1
+    const dp = new Uint32Array((n + 1) * (m + 1))
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= m; j++) {
+        const idx = i * cols + j
+        if (original[i - 1] === modified[j - 1]) {
+          dp[idx] = dp[(i - 1) * cols + (j - 1)] + 1
+        }
+        else {
+          const top = dp[(i - 1) * cols + j]
+          const left = dp[i * cols + (j - 1)]
+          dp[idx] = top >= left ? top : left
+        }
+      }
+    }
+
+    const matches: Array<{ o: number, m: number }> = []
+    let i = n
+    let j = m
+    while (i > 0 && j > 0) {
+      if (original[i - 1] === modified[j - 1]) {
+        matches.push({ o: i, m: j })
+        i--
+        j--
+      }
+      else {
+        const top = dp[(i - 1) * cols + j]
+        const left = dp[i * cols + (j - 1)]
+        if (top >= left)
+          i--
+        else j--
+      }
+    }
+    matches.reverse()
+    matches.push({ o: n + 1, m: m + 1 })
+
+    const lineChanges: monaco.editor.ILineChange[] = []
+    let prevO = 1
+    let prevM = 1
+    for (const match of matches) {
+      const oStart = prevO
+      const oEnd = match.o - 1
+      const mStart = prevM
+      const mEnd = match.m - 1
+      const hasOriginal = oStart <= oEnd
+      const hasModified = mStart <= mEnd
+      if (hasOriginal || hasModified) {
+        lineChanges.push({
+          originalStartLineNumber: hasOriginal ? oStart : oStart,
+          originalEndLineNumber: hasOriginal ? oEnd : (oStart - 1),
+          modifiedStartLineNumber: hasModified ? mStart : mStart,
+          modifiedEndLineNumber: hasModified ? mEnd : (mStart - 1),
+        })
+      }
+      prevO = match.o + 1
+      prevM = match.m + 1
+    }
+    return lineChanges
+  }
+
+  private getEffectiveLineChanges() {
+    if (!this.diffEditorView)
+      return []
+
+    const nativeLineChanges = this.diffEditorView.getLineChanges()
+    if (nativeLineChanges) {
+      this.diffHunkFallbackLineChanges = []
+      this.diffHunkFallbackVersions = null
+      return nativeLineChanges
+    }
+
+    if (!this.originalModel || !this.modifiedModel)
+      return []
+
+    const versions = {
+      original: this.originalModel.getAlternativeVersionId(),
+      modified: this.modifiedModel.getAlternativeVersionId(),
+    }
+    if (
+      this.diffHunkFallbackVersions
+      && this.diffHunkFallbackVersions.original === versions.original
+      && this.diffHunkFallbackVersions.modified === versions.modified
+    ) {
+      return this.diffHunkFallbackLineChanges
+    }
+
+    this.diffHunkFallbackLineChanges = this.computeLineChangesFallback(
+      this.originalModel,
+      this.modifiedModel,
+    )
+    this.diffHunkFallbackVersions = versions
+    return this.diffHunkFallbackLineChanges
+  }
+
+  private ensureDiffHunkStyle() {
+    if (typeof document === 'undefined')
+      return
+    if (document.getElementById(DiffEditorManager.diffHunkStyleId))
+      return
+    const style = document.createElement('style')
+    style.id = DiffEditorManager.diffHunkStyleId
+    style.textContent = `
+.stream-monaco-diff-hunk-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+.stream-monaco-diff-hunk-actions {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  gap: 6px;
+  pointer-events: auto;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f8f8f8 92%, #000 8%);
+  border: 1px solid color-mix(in srgb, #ddd 88%, #000 12%);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 10%);
+}
+.stream-monaco-diff-hunk-actions button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  line-height: 1.35;
+  background: white;
+  color: #222;
+  cursor: pointer;
+}
+.stream-monaco-diff-hunk-actions button:hover {
+  background: #f1f1f1;
+}
+.stream-monaco-diff-hunk-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+`
+    document.head.append(style)
+  }
+
+  private createDomDisposable(
+    el: HTMLElement,
+    eventName: string,
+    listener: EventListenerOrEventListenerObject,
+  ) {
+    el.addEventListener(eventName, listener)
+    this.diffHunkDisposables.push({
+      dispose: () => el.removeEventListener(eventName, listener),
+    })
+  }
+
+  private createDiffHunkActionNode(side: DiffHunkSide): HTMLDivElement {
+    const node = document.createElement('div')
+    node.className = 'stream-monaco-diff-hunk-actions'
+    node.dataset.side = side
+
+    const createButton = (action: DiffHunkActionKind, label: string) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = label
+      button.dataset.action = action
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        this.applyDiffHunkAction(side, action)
+      })
+      return button
+    }
+
+    node.append(createButton('revert', 'Revert'), createButton('stage', 'Stage'))
+
+    this.createDomDisposable(node, 'mouseenter', () => this.cancelScheduledHideDiffHunkActions())
+    this.createDomDisposable(node, 'mouseleave', () => this.scheduleHideDiffHunkActions())
+    return node
+  }
+
+  private setupDiffHunkInteractions() {
+    this.disposeDiffHunkInteractions()
+    if (!this.diffEditorView || !this.lastContainer)
+      return
+    if (this.options.diffHunkActionsOnHover !== true)
+      return
+    if (typeof document === 'undefined')
+      return
+
+    this.ensureDiffHunkStyle()
+
+    const containerStyle = globalThis.getComputedStyle?.(this.lastContainer)
+    if (!containerStyle || containerStyle.position === 'static')
+      this.lastContainer.style.position = 'relative'
+
+    const overlay = document.createElement('div')
+    overlay.className = 'stream-monaco-diff-hunk-overlay'
+    this.diffHunkOverlay = overlay
+    this.lastContainer.append(overlay)
+
+    this.diffHunkUpperNode = this.createDiffHunkActionNode('upper')
+    this.diffHunkLowerNode = this.createDiffHunkActionNode('lower')
+    overlay.append(this.diffHunkUpperNode, this.diffHunkLowerNode)
+
+    const originalEditor = this.diffEditorView.getOriginalEditor()
+    const modifiedEditor = this.diffEditorView.getModifiedEditor()
+
+    const bindHover = (
+      editor: monaco.editor.IStandaloneCodeEditor,
+      side: DiffEditorSide,
+    ) => {
+      this.diffHunkDisposables.push(editor.onMouseMove((event) => {
+        this.handleDiffHunkMouseMove(side, event)
+      }))
+      this.diffHunkDisposables.push(editor.onMouseLeave(() => this.scheduleHideDiffHunkActions()))
+      this.diffHunkDisposables.push(editor.onDidScrollChange(() => this.repositionDiffHunkNodes()))
+      this.diffHunkDisposables.push(editor.onDidLayoutChange(() => this.repositionDiffHunkNodes()))
+    }
+    bindHover(originalEditor, 'original')
+    bindHover(modifiedEditor, 'modified')
+
+    this.diffHunkDisposables.push(this.diffEditorView.onDidUpdateDiff(() => {
+      this.diffHunkLineChanges = this.getEffectiveLineChanges()
+      if (this.diffHunkActiveChange)
+        this.hideDiffHunkActions()
+    }))
+    this.diffHunkLineChanges = this.getEffectiveLineChanges()
+  }
+
+  private cancelScheduledHideDiffHunkActions() {
+    if (this.diffHunkHideTimer != null) {
+      clearTimeout(this.diffHunkHideTimer)
+      this.diffHunkHideTimer = null
+    }
+  }
+
+  private scheduleHideDiffHunkActions(delayMs = this.options.diffHunkHoverHideDelayMs ?? 160) {
+    this.cancelScheduledHideDiffHunkActions()
+    this.diffHunkHideTimer = (setTimeout(() => {
+      this.diffHunkHideTimer = null
+      this.hideDiffHunkActions()
+    }, delayMs) as unknown) as number
+  }
+
+  private hideDiffHunkActions() {
+    this.diffHunkActiveChange = null
+    if (this.diffHunkUpperNode)
+      this.diffHunkUpperNode.style.display = 'none'
+    if (this.diffHunkLowerNode)
+      this.diffHunkLowerNode.style.display = 'none'
+  }
+
+  private hasOriginalLines(change: monaco.editor.ILineChange) {
+    return change.originalStartLineNumber > 0
+      && change.originalEndLineNumber >= change.originalStartLineNumber
+  }
+
+  private hasModifiedLines(change: monaco.editor.ILineChange) {
+    return change.modifiedStartLineNumber > 0
+      && change.modifiedEndLineNumber >= change.modifiedStartLineNumber
+  }
+
+  private distanceToLineChange(
+    side: DiffEditorSide,
+    change: monaco.editor.ILineChange,
+    line: number,
+  ) {
+    const hasRange = side === 'original'
+      ? this.hasOriginalLines(change)
+      : this.hasModifiedLines(change)
+    const start = side === 'original'
+      ? change.originalStartLineNumber
+      : change.modifiedStartLineNumber
+    const end = side === 'original'
+      ? change.originalEndLineNumber
+      : change.modifiedEndLineNumber
+
+    if (hasRange) {
+      if (line < start)
+        return start - line
+      if (line > end)
+        return line - end
+      return 0
+    }
+    const fallbackAnchor = Math.max(1, start || end || 1)
+    return Math.abs(line - fallbackAnchor)
+  }
+
+  private findLineChangeByHoverLine(
+    side: DiffEditorSide,
+    line: number,
+  ) {
+    if (this.diffHunkLineChanges.length === 0)
+      return null
+
+    let best: monaco.editor.ILineChange | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const change of this.diffHunkLineChanges) {
+      const distance = this.distanceToLineChange(side, change, line)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = change
+        if (distance === 0)
+          break
+      }
+    }
+
+    if (bestDistance > 2)
+      return null
+    return best
+  }
+
+  private handleDiffHunkMouseMove(
+    side: DiffEditorSide,
+    event: monaco.editor.IEditorMouseEvent,
+  ) {
+    const line = event.target.position?.lineNumber
+    if (!line) {
+      this.scheduleHideDiffHunkActions(120)
+      return
+    }
+    const change = this.findLineChangeByHoverLine(side, line)
+    if (!change) {
+      this.scheduleHideDiffHunkActions(120)
+      return
+    }
+    this.cancelScheduledHideDiffHunkActions()
+    this.diffHunkActiveChange = change
+    this.repositionDiffHunkNodes()
+  }
+
+  private isOriginalEditorCollapsed() {
+    if (!this.diffEditorView)
+      return true
+    const info = this.diffEditorView.getOriginalEditor().getLayoutInfo?.()
+    return !info || info.width < 24
+  }
+
+  private getEditorBySide(side: DiffEditorSide) {
+    if (!this.diffEditorView)
+      return null
+    return side === 'original'
+      ? this.diffEditorView.getOriginalEditor()
+      : this.diffEditorView.getModifiedEditor()
+  }
+
+  private getFullLineRange(
+    model: monaco.editor.ITextModel,
+    startLine: number,
+    endLine: number,
+  ) {
+    if (endLine < startLine)
+      return null
+    const lineCount = model.getLineCount()
+    if (lineCount < 1)
+      return null
+
+    const start = Math.max(1, Math.min(startLine, lineCount))
+    const end = Math.max(start, Math.min(endLine, lineCount))
+    if (end < lineCount)
+      return new monaco.Range(start, 1, end + 1, 1)
+    return new monaco.Range(start, 1, end, model.getLineMaxColumn(end))
+  }
+
+  private getLinesText(
+    model: monaco.editor.ITextModel,
+    startLine: number,
+    endLine: number,
+  ) {
+    const range = this.getFullLineRange(model, startLine, endLine)
+    if (!range)
+      return ''
+    return model.getValueInRange(range)
+  }
+
+  private getInsertRangeBeforeLine(
+    model: monaco.editor.ITextModel,
+    lineNumber: number,
+  ) {
+    const lineCount = model.getLineCount()
+    if (lineNumber <= 1)
+      return new monaco.Range(1, 1, 1, 1)
+    if (lineNumber <= lineCount)
+      return new monaco.Range(lineNumber, 1, lineNumber, 1)
+    const lastLine = lineCount
+    const lastColumn = model.getLineMaxColumn(lastLine)
+    return new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
+  }
+
+  private getInsertRangeAfterLine(
+    model: monaco.editor.ITextModel,
+    lineNumber: number,
+  ) {
+    const lineCount = model.getLineCount()
+    if (lineNumber < 1)
+      return new monaco.Range(1, 1, 1, 1)
+    if (lineNumber < lineCount)
+      return new monaco.Range(lineNumber + 1, 1, lineNumber + 1, 1)
+    const lastLine = lineCount
+    const lastColumn = model.getLineMaxColumn(lastLine)
+    return new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
+  }
+
+  private syncDiffKnownValues() {
+    if (this.originalModel)
+      this.lastKnownOriginalCode = this.originalModel.getValue()
+    if (this.modifiedModel) {
+      this.lastKnownModifiedCode = this.modifiedModel.getValue()
+      this.lastKnownModifiedLineCount = this.modifiedModel.getLineCount()
+    }
+    this.lastKnownModifiedDirty = false
+    this._hasScrollBar = false
+    this.cachedComputedHeightDiff = this.computedHeight()
+    this.cachedScrollHeightDiff = this.diffEditorView?.getModifiedEditor().getScrollHeight?.() ?? this.cachedScrollHeightDiff
+    this.diffHeightManager?.update()
+  }
+
+  private applyDefaultDiffHunkAction(context: DiffHunkActionContext) {
+    const { action, side, lineChange } = context
+    if (!this.originalModel || !this.modifiedModel)
+      return
+
+    const hasOriginal = this.hasOriginalLines(lineChange)
+    const hasModified = this.hasModifiedLines(lineChange)
+
+    if (action === 'revert' && side === 'upper') {
+      if (!hasOriginal)
+        return
+      const text = this.getLinesText(
+        this.originalModel,
+        lineChange.originalStartLineNumber,
+        lineChange.originalEndLineNumber,
+      )
+      if (!text)
+        return
+      const anchor = hasModified
+        ? lineChange.modifiedStartLineNumber
+        : Math.max(1, lineChange.modifiedStartLineNumber || lineChange.modifiedEndLineNumber || this.modifiedModel.getLineCount())
+      const range = this.getInsertRangeBeforeLine(this.modifiedModel, anchor)
+      this.modifiedModel.applyEdits([{ range, text, forceMoveMarkers: true }])
+      return
+    }
+
+    if (action === 'revert' && side === 'lower') {
+      if (!hasModified)
+        return
+      const range = this.getFullLineRange(
+        this.modifiedModel,
+        lineChange.modifiedStartLineNumber,
+        lineChange.modifiedEndLineNumber,
+      )
+      if (!range)
+        return
+      this.modifiedModel.applyEdits([{ range, text: '', forceMoveMarkers: true }])
+      return
+    }
+
+    if (action === 'stage' && side === 'upper') {
+      if (!hasOriginal)
+        return
+      const range = this.getFullLineRange(
+        this.originalModel,
+        lineChange.originalStartLineNumber,
+        lineChange.originalEndLineNumber,
+      )
+      if (!range)
+        return
+      this.originalModel.applyEdits([{ range, text: '', forceMoveMarkers: true }])
+      return
+    }
+
+    if (action === 'stage' && side === 'lower') {
+      if (!hasModified)
+        return
+      const text = this.getLinesText(
+        this.modifiedModel,
+        lineChange.modifiedStartLineNumber,
+        lineChange.modifiedEndLineNumber,
+      )
+      if (!text)
+        return
+      const anchor = hasOriginal
+        ? lineChange.originalEndLineNumber
+        : Math.max(0, lineChange.originalStartLineNumber - 1)
+      const range = this.getInsertRangeAfterLine(this.originalModel, anchor)
+      this.originalModel.applyEdits([{ range, text, forceMoveMarkers: true }])
+    }
+  }
+
+  private applyDiffHunkAction(side: DiffHunkSide, action: DiffHunkActionKind) {
+    if (!this.diffHunkActiveChange || !this.originalModel || !this.modifiedModel)
+      return
+
+    this.flushOriginalAppendBufferSync()
+    this.flushModifiedAppendBufferSync()
+
+    const context: DiffHunkActionContext = {
+      action,
+      side,
+      lineChange: this.diffHunkActiveChange,
+      originalModel: this.originalModel,
+      modifiedModel: this.modifiedModel,
+    }
+
+    let allowDefault = true
+    if (typeof this.options.onDiffHunkAction === 'function') {
+      try {
+        allowDefault = this.options.onDiffHunkAction(context) !== false
+      }
+      catch (error) {
+        console.warn('onDiffHunkAction callback threw an error:', error)
+      }
+    }
+
+    if (allowDefault)
+      this.applyDefaultDiffHunkAction(context)
+    this.syncDiffKnownValues()
+    this.hideDiffHunkActions()
+  }
+
+  private setDiffHunkNodeEnabled(
+    node: HTMLDivElement | null,
+    enabled: boolean,
+  ) {
+    if (!node)
+      return
+    const buttons = node.querySelectorAll('button')
+    buttons.forEach((button) => {
+      ; (button as HTMLButtonElement).disabled = !enabled
+    })
+  }
+
+  private positionDiffHunkNode(
+    node: HTMLDivElement,
+    side: DiffEditorSide,
+    anchorLine: number,
+    extraOffsetY = 0,
+  ) {
+    if (!this.diffHunkOverlay)
+      return
+    const editor = this.getEditorBySide(side)
+    if (!editor)
+      return
+    const host = editor.getContainerDomNode()
+    const line = Math.max(1, anchorLine)
+    const rawTop = editor.getTopForLineNumber(line) - (editor.getScrollTop?.() ?? 0)
+    const lineHeight = editor.getOption(monaco.editor.EditorOption.lineHeight)
+    const nodeWidth = node.offsetWidth || 130
+    const nodeHeight = node.offsetHeight || 30
+    const left = host.offsetLeft + Math.max(6, host.clientWidth - nodeWidth - 10)
+    const hostTop = host.offsetTop
+    const minTop = hostTop + 4
+    const maxTop = hostTop + Math.max(4, host.clientHeight - nodeHeight - 4)
+    const top = Math.min(
+      maxTop,
+      Math.max(minTop, hostTop + rawTop + Math.round(lineHeight * 0.2) + extraOffsetY),
+    )
+    node.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    node.style.display = 'flex'
+  }
+
+  private repositionDiffHunkNodes() {
+    if (!this.diffHunkActiveChange) {
+      this.hideDiffHunkActions()
+      return
+    }
+    if (!this.diffHunkUpperNode || !this.diffHunkLowerNode)
+      return
+    if (!this.diffEditorView)
+      return
+
+    const change = this.diffHunkActiveChange
+    const hasOriginal = this.hasOriginalLines(change)
+    const hasModified = this.hasModifiedLines(change)
+    this.setDiffHunkNodeEnabled(this.diffHunkUpperNode, hasOriginal)
+    this.setDiffHunkNodeEnabled(this.diffHunkLowerNode, hasModified)
+
+    const originalCollapsed = this.isOriginalEditorCollapsed()
+    if (hasOriginal) {
+      const upperSide: DiffEditorSide = originalCollapsed ? 'modified' : 'original'
+      const upperAnchor = originalCollapsed
+        ? Math.max(1, change.modifiedStartLineNumber || change.modifiedEndLineNumber || 1)
+        : change.originalStartLineNumber
+      this.positionDiffHunkNode(this.diffHunkUpperNode, upperSide, upperAnchor)
+    }
+    else {
+      this.diffHunkUpperNode.style.display = 'none'
+    }
+
+    if (hasModified) {
+      const samePane = originalCollapsed
+      const lowerAnchor = change.modifiedStartLineNumber
+      this.positionDiffHunkNode(
+        this.diffHunkLowerNode,
+        'modified',
+        lowerAnchor,
+        samePane ? 32 : 0,
+      )
+    }
+    else {
+      this.diffHunkLowerNode.style.display = 'none'
+    }
+  }
 
   private scheduleFlushAppendBufferDiff() {
     if (this.appendBufferDiffScheduled)
@@ -387,6 +1085,7 @@ export class DiffEditorManager {
     const lang = processedLanguage(language) || language
     this.originalModel = monaco.editor.createModel(originalCode, lang)
     this.modifiedModel = monaco.editor.createModel(modifiedCode, lang)
+    const hideUnchangedRegions = this.resolveDiffHideUnchangedRegionsOption()
 
     this.diffEditorView = monaco.editor.createDiffEditor(container, {
       automaticLayout: true,
@@ -402,6 +1101,7 @@ export class DiffEditorManager {
         ...(this.options.scrollbar || {}),
       },
       ...this.options,
+      hideUnchangedRegions,
     })
     monaco.editor.setTheme(currentTheme)
 
@@ -413,7 +1113,7 @@ export class DiffEditorManager {
     // Default to 50ms throttling for diff streaming updates, unless overridden.
     // This helps the diff worker complete intermediate computations so highlights
     // can appear progressively during streaming.
-    this.diffUpdateThrottleMs = (this.options as any).diffUpdateThrottleMs ?? 50
+    this.diffUpdateThrottleMs = this.diffUpdateThrottleMsOption ?? (this.options as any).diffUpdateThrottleMs ?? 50
 
     this.shouldAutoScrollDiff = !!(this.autoScrollInitial && this.diffAutoScroll)
     if (this.diffScrollWatcher) {
@@ -518,6 +1218,7 @@ export class DiffEditorManager {
     })
 
     this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), this.lastKnownModifiedLineCount ?? undefined)
+    this.setupDiffHunkInteractions()
 
     return this.diffEditorView
   }
@@ -709,6 +1410,7 @@ export class DiffEditorManager {
     }
     this.rafScheduler.cancel('content-size-change-diff')
     this.rafScheduler.cancel('sync-last-known-modified')
+    this.disposeDiffHunkInteractions()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -767,6 +1469,8 @@ export class DiffEditorManager {
       clearTimeout(this.appendFlushThrottleTimerDiff)
       this.appendFlushThrottleTimerDiff = null
     }
+    this.hideDiffHunkActions()
+    this.cancelScheduledHideDiffHunkActions()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()

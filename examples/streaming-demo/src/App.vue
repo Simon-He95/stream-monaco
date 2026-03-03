@@ -3,6 +3,7 @@
     <nav style="padding:12px; border-bottom:1px solid #eee; display:flex; gap:12px;">
       <router-link to="/">Streaming Demo</router-link>
       <router-link to="/diff">Diff Editor Demo</router-link>
+      <router-link to="/diff-ux">Diff UX Demo</router-link>
     </nav>
     <main style="padding:12px">
       <router-view />

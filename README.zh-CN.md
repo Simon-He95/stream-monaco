@@ -380,6 +380,10 @@ const {
   languages: ['javascript', 'typescript'],
   readOnly: true,
   MAX_HEIGHT: 500,
+  // 自动折叠大段未改动区域
+  diffHideUnchangedRegions: true,
+  // hover 变更块时显示上下分区的局部 Revert / Stage 操作
+  diffHunkActionsOnHover: true,
 })
 
 const original = `export function add(a: number, b: number) {\n  return a + b\n}`
@@ -389,6 +393,62 @@ onMounted(async () => {
   if (!container.value)
     return
   await createDiffEditor(container.value, original, modified, 'typescript')
+})
+```
+
+Diff 体验增强相关配置：
+
+- `diffHideUnchangedRegions`（默认 `true`）：折叠未改动区块；也支持直接传 Monaco 的 `hideUnchangedRegions` 对象。
+- `diffHunkActionsOnHover`（默认 `false`）：仅在显式传 `true` 时，hover 变更 hunk 才会显示上下分区的 `Revert` / `Stage`。
+- `onDiffHunkAction(context)`（可选）：返回 `false` 可拦截并跳过内置模型编辑逻辑。
+
+示例 1：开启 hidden 区折叠 + hover Revert/Stage（可理解为局部回退与暂存）
+
+```ts
+const { createDiffEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['typescript'],
+  readOnly: true,
+  diffHideUnchangedRegions: {
+    enabled: true,
+    contextLineCount: 2,
+    minimumLineCount: 4,
+    revealLineCount: 2,
+  },
+  diffHunkActionsOnHover: true,
+})
+
+await createDiffEditor(container, original, modified, 'typescript')
+```
+
+示例 2：完全接管 Revert/Stage 事件（接你自己的 stash / patch API）
+
+```ts
+useMonaco({
+  diffHideUnchangedRegions: true,
+  diffHunkActionsOnHover: true,
+  onDiffHunkAction: async (ctx) => {
+    const {
+      action, // 'revert' | 'stage'
+      side, // 'upper' | 'lower'
+      lineChange,
+      originalModel,
+      modifiedModel,
+    } = ctx
+
+    // 这里接你的服务端逻辑，例如提交到 stash / patch 队列
+    await saveHunkAction({
+      action,
+      side,
+      range: lineChange,
+      original: originalModel.getValue(),
+      modified: modifiedModel.getValue(),
+    })
+
+    // 返回 false: 拦截内置编辑（由你完全接管）
+    // 返回 true/undefined: 继续执行内置编辑
+    return false
+  },
 })
 ```
 
@@ -643,6 +703,10 @@ modified?.onDidChangeContent?.(() => { /* ... */ })
 | `autoScrollThresholdPx` | `number`           | `32`                                | 自动滚动的像素阈值             |
 | `autoScrollThresholdLines` | `number`        | `2`                                 | 自动滚动的行数阈值             |
 | `diffAutoScroll`        | `boolean`          | `true`                              | 是否启用 Diff modified 侧自动滚动 |
+| `diffHideUnchangedRegions` | `boolean \| object` | `true`                           | 是否折叠 Diff 中未改动区块（支持传 Monaco 配置对象） |
+| `diffHunkActionsOnHover` | `boolean`         | `false`                             | 是否启用 hover hunk 的上下分区局部 Revert / Stage（需显式开启） |
+| `diffHunkHoverHideDelayMs` | `number`        | `160`                               | hover 操作浮层离开后的隐藏延迟（毫秒） |
+| `onDiffHunkAction`      | `function`         | -                                   | hunk 操作回调（返回 `false` 可阻止默认编辑） |
 
 ##### 返回值
 

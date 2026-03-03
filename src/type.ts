@@ -328,6 +328,33 @@ export interface MonacoOptions
    */
   diffAutoScroll?: boolean
   /**
+   * Controls Monaco's diff unchanged-region folding behavior.
+   * - `true`: use stream-monaco defaults (enabled with compact context lines)
+   * - `false`: disable unchanged-region folding
+   * - object: forward to Monaco `hideUnchangedRegions`
+   *
+   * Default: `true`
+   */
+  diffHideUnchangedRegions?:
+    | boolean
+    | NonNullable<monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']>
+  /**
+   * Enable hover actions for each diff hunk split part (upper/lower):
+   * local `revert` and `stage`.
+   * Default: `false` (must be explicitly enabled).
+   */
+  diffHunkActionsOnHover?: boolean
+  /**
+   * Hide delay (ms) for diff hunk hover action widgets after mouse leaves.
+   * Default: `160`.
+   */
+  diffHunkHoverHideDelayMs?: number
+  /**
+   * Optional interception callback for hunk hover actions.
+   * Return `false` to prevent the built-in model edit behavior.
+   */
+  onDiffHunkAction?: (context: DiffHunkActionContext) => void | boolean
+  /**
    * Debounce time (ms) to coalesce multiple reveal requests into a single
    * reveal. Useful for streaming/append scenarios. Default: 75
    */
@@ -392,4 +419,15 @@ export enum RevealStrategy {
   Bottom = 'bottom',
   CenterIfOutside = 'centerIfOutside',
   Center = 'center',
+}
+
+export type DiffHunkActionKind = 'revert' | 'stage'
+export type DiffHunkSide = 'upper' | 'lower'
+
+export interface DiffHunkActionContext {
+  action: DiffHunkActionKind
+  side: DiffHunkSide
+  lineChange: monaco.editor.ILineChange
+  originalModel: monaco.editor.ITextModel
+  modifiedModel: monaco.editor.ITextModel
 }

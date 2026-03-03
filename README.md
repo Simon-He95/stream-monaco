@@ -364,6 +364,10 @@ const {
   languages: ['javascript', 'typescript'],
   readOnly: true,
   MAX_HEIGHT: 500,
+  // Collapse long unchanged regions automatically.
+  diffHideUnchangedRegions: true,
+  // Hover a changed hunk to show split upper/lower Revert/Stage actions.
+  diffHunkActionsOnHover: true,
 })
 
 const original = `export function add(a: number, b: number) {\n  return a + b\n}`
@@ -378,6 +382,61 @@ onMounted(async () => {
 <template>
   <div ref="container" class="diff-editor" />
 </template>
+```
+
+Diff UX options:
+
+- `diffHideUnchangedRegions` (default `true`): fold unchanged ranges (can pass Monaco `hideUnchangedRegions` object).
+- `diffHunkActionsOnHover` (default `false`): explicitly set `true` to enable split upper/lower `Revert` and `Stage` on hunk hover.
+- `onDiffHunkAction(context)` (optional): return `false` to intercept and skip built-in model edits.
+
+Example 1: enable unchanged folding + hover Revert/Stage
+
+```ts
+const { createDiffEditor } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['typescript'],
+  readOnly: true,
+  diffHideUnchangedRegions: {
+    enabled: true,
+    contextLineCount: 2,
+    minimumLineCount: 4,
+    revealLineCount: 2,
+  },
+  diffHunkActionsOnHover: true,
+})
+
+await createDiffEditor(container, original, modified, 'typescript')
+```
+
+Example 2: fully intercept Revert/Stage and handle your own stash/patch flow
+
+```ts
+useMonaco({
+  diffHideUnchangedRegions: true,
+  diffHunkActionsOnHover: true,
+  onDiffHunkAction: async (ctx) => {
+    const {
+      action, // 'revert' | 'stage'
+      side, // 'upper' | 'lower'
+      lineChange,
+      originalModel,
+      modifiedModel,
+    } = ctx
+
+    await saveHunkAction({
+      action,
+      side,
+      range: lineChange,
+      original: originalModel.getValue(),
+      modified: modifiedModel.getValue(),
+    })
+
+    // false => skip built-in edit, fully controlled by user code
+    // true/undefined => continue built-in edit
+    return false
+  },
+})
 ```
 
 ### Shiki highlighter (advanced)
