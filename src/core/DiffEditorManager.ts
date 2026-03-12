@@ -11,7 +11,7 @@ import { createScrollWatcherForEditor } from '../utils/scroll'
 type DiffEditorSide = 'original' | 'modified'
 
 export class DiffEditorManager {
-  private static readonly diffHunkStyleId = 'stream-monaco-diff-hunk-style'
+  private static readonly diffUiStyleId = 'stream-monaco-diff-ui-style'
   private diffEditorView: monaco.editor.IStandaloneDiffEditor | null = null
   private originalModel: monaco.editor.ITextModel | null = null
   private modifiedModel: monaco.editor.ITextModel | null = null
@@ -81,6 +81,11 @@ export class DiffEditorManager {
   private diffHunkFallbackLineChanges: monaco.editor.ILineChange[] = []
   private diffHunkFallbackVersions: { original: number, modified: number } | null = null
   private diffHunkHideTimer: number | null = null
+  private diffUnchangedRegionDisposables: monaco.IDisposable[] = []
+  private diffUnchangedRegionObserver: MutationObserver | null = null
+  private diffUnchangedBridgeOverlay: HTMLDivElement | null = null
+  private diffUnchangedBridgeDisposables: monaco.IDisposable[] = []
+  private diffPersistedUnchangedModelState: monaco.editor.IDiffEditorViewState['modelState'] | null = null
 
   constructor(
     private options: MonacoOptions,
@@ -174,6 +179,7 @@ export class DiffEditorManager {
             originalEndLineNumber: n,
             modifiedStartLineNumber: 1,
             modifiedEndLineNumber: m,
+            charChanges: [],
           }]
     }
 
@@ -229,6 +235,7 @@ export class DiffEditorManager {
           originalEndLineNumber: hasOriginal ? oEnd : (oStart - 1),
           modifiedStartLineNumber: hasModified ? mStart : mStart,
           modifiedEndLineNumber: hasModified ? mEnd : (mStart - 1),
+          charChanges: [],
         })
       }
       prevO = match.o + 1
@@ -271,14 +278,281 @@ export class DiffEditorManager {
     return this.diffHunkFallbackLineChanges
   }
 
-  private ensureDiffHunkStyle() {
+  private ensureDiffUiStyle() {
     if (typeof document === 'undefined')
       return
-    if (document.getElementById(DiffEditorManager.diffHunkStyleId))
+    if (document.getElementById(DiffEditorManager.diffUiStyleId))
       return
     const style = document.createElement('style')
-    style.id = DiffEditorManager.diffHunkStyleId
+    style.id = DiffEditorManager.diffUiStyleId
     style.textContent = `
+.stream-monaco-diff-root {
+  --stream-monaco-unchanged-fg: var(--vscode-diffEditor-unchangedRegionForeground, var(--vscode-editor-foreground, currentColor));
+  --stream-monaco-unchanged-bg: var(--vscode-diffEditor-unchangedRegionBackground, transparent);
+  --stream-monaco-editor-bg: var(--vscode-editor-background, #fff);
+  --stream-monaco-widget-shadow: var(--vscode-widget-shadow, rgb(0 0 0 / 30%));
+  --stream-monaco-focus: var(--vscode-focusBorder, var(--stream-monaco-unchanged-fg));
+  --stream-monaco-surface: color-mix(in srgb, var(--stream-monaco-unchanged-bg) 82%, var(--stream-monaco-editor-bg) 18%);
+  --stream-monaco-surface-hover: color-mix(in srgb, var(--stream-monaco-unchanged-bg) 72%, var(--stream-monaco-editor-bg) 28%);
+  --stream-monaco-surface-soft: color-mix(in srgb, var(--stream-monaco-unchanged-bg) 55%, transparent);
+  --stream-monaco-border: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 20%, transparent);
+  --stream-monaco-border-strong: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 34%, transparent);
+  --stream-monaco-muted: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 72%, transparent);
+  --stream-monaco-accent-soft: color-mix(in srgb, var(--stream-monaco-focus) 18%, transparent);
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines-widget {
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines {
+  height: auto;
+  width: 100%;
+  transform: translateY(-10px);
+  padding: 4px 4px 6px;
+  box-sizing: border-box;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .top,
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .bottom {
+  display: none !important;
+  pointer-events: none !important;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center {
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 6px);
+  min-height: 32px;
+  margin: 0 auto;
+  padding: 4px 10px 4px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--stream-monaco-border);
+  background: linear-gradient(180deg, var(--stream-monaco-surface) 0%, color-mix(in srgb, var(--stream-monaco-surface) 92%, var(--stream-monaco-editor-bg) 8%) 100%);
+  box-shadow: 0 14px 26px -22px var(--stream-monaco-widget-shadow);
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-clickable {
+  cursor: pointer;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-bridge-source {
+  opacity: 0;
+  pointer-events: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  transform: none !important;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-bridge-source > * {
+  visibility: hidden;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-merged-secondary {
+  padding-left: 10px;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center:hover,
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-focus-within {
+  background: linear-gradient(180deg, var(--stream-monaco-surface-hover) 0%, color-mix(in srgb, var(--stream-monaco-surface-hover) 92%, var(--stream-monaco-editor-bg) 8%) 100%);
+  border-color: var(--stream-monaco-border-strong);
+  box-shadow: 0 18px 30px -24px var(--stream-monaco-widget-shadow);
+  transform: translateY(-1px);
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-merged-secondary .stream-monaco-unchanged-primary {
+  display: none !important;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-primary,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-primary {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: max-content;
+  overflow: visible;
+  justify-content: flex-start !important;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-primary {
+  width: 100% !important;
+  justify-content: center !important;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-expand,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-expand {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  text-decoration: none;
+  color: inherit;
+  background: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--stream-monaco-unchanged-fg) 10%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-expand {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-expand::after,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-expand::after {
+  content: attr(data-stream-monaco-label);
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-expand:hover,
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-expand:focus-visible,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-expand:hover {
+  background: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 18%, transparent);
+  border-color: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 22%, transparent);
+  transform: translateY(-1px);
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-expand:hover {
+  background: transparent;
+  border-color: transparent;
+  transform: none;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-meta,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--stream-monaco-muted);
+  white-space: nowrap;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-merged-secondary .stream-monaco-unchanged-meta {
+  justify-content: center;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-count,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-count {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--stream-monaco-surface-soft);
+  color: var(--stream-monaco-unchanged-fg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-separator {
+  flex: 0 0 auto;
+  opacity: 0.35;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-breadcrumb,
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .breadcrumb-item {
+  min-width: 0;
+  max-width: 100%;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 6px;
+  padding: 2px 6px;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center .stream-monaco-unchanged-breadcrumb:hover {
+  background: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 10%, transparent);
+  color: var(--stream-monaco-unchanged-fg);
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-merged-secondary .stream-monaco-unchanged-separator,
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center.stream-monaco-unchanged-merged-secondary .stream-monaco-unchanged-breadcrumb {
+  display: none;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge {
+  position: absolute;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  min-height: 32px;
+  padding: 4px 12px 4px 10px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stream-monaco-unchanged-fg) 24%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stream-monaco-editor-bg) 88%, var(--stream-monaco-unchanged-fg) 12%) 0%, color-mix(in srgb, var(--stream-monaco-editor-bg) 94%, var(--stream-monaco-unchanged-fg) 6%) 100%);
+  box-shadow: 0 14px 26px -22px var(--stream-monaco-widget-shadow);
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge:hover,
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge.stream-monaco-focus-visible {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stream-monaco-editor-bg) 84%, var(--stream-monaco-unchanged-fg) 16%) 0%, color-mix(in srgb, var(--stream-monaco-editor-bg) 92%, var(--stream-monaco-unchanged-fg) 8%) 100%);
+  border-color: color-mix(in srgb, var(--stream-monaco-unchanged-fg) 32%, transparent);
+  box-shadow: 0 18px 30px -24px var(--stream-monaco-widget-shadow);
+  transform: translateY(-1px);
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge:focus {
+  outline: none;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-meta {
+  justify-self: center;
+  justify-content: center;
+}
+.stream-monaco-diff-root .stream-monaco-diff-unchanged-bridge .stream-monaco-unchanged-spacer {
+  display: block;
+  visibility: hidden;
+  width: 100%;
+  height: 1px;
+  flex: 0 0 auto;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines-compact {
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines-compact .text {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--stream-monaco-surface-soft);
+  color: var(--stream-monaco-unchanged-fg);
+}
+.stream-monaco-diff-root .monaco-editor .fold-unchanged {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 18px !important;
+  height: 18px !important;
+  margin-left: 4px;
+  border-radius: 999px;
+  color: var(--stream-monaco-unchanged-fg);
+  background: var(--stream-monaco-surface);
+  border: 1px solid var(--stream-monaco-border);
+  box-shadow: 0 10px 18px -18px var(--stream-monaco-widget-shadow);
+  opacity: 0.88 !important;
+  transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.14s ease, opacity 0.14s ease, box-shadow 0.14s ease;
+}
+.stream-monaco-diff-root .monaco-editor .fold-unchanged:hover,
+.stream-monaco-diff-root .monaco-editor .fold-unchanged.stream-monaco-focus-visible {
+  opacity: 1 !important;
+  transform: translateY(-1px);
+  background: var(--stream-monaco-surface-hover);
+  border-color: var(--stream-monaco-border-strong);
+  box-shadow: 0 14px 24px -18px var(--stream-monaco-widget-shadow);
+}
+.stream-monaco-diff-root .monaco-editor .diff-hidden-lines .center:focus,
+.stream-monaco-diff-root .monaco-editor .fold-unchanged:focus {
+  outline: none;
+}
 .stream-monaco-diff-hunk-overlay {
   position: absolute;
   inset: 0;
@@ -321,12 +595,13 @@ export class DiffEditorManager {
   }
 
   private createDomDisposable(
+    bucket: monaco.IDisposable[],
     el: HTMLElement,
     eventName: string,
     listener: EventListenerOrEventListenerObject,
   ) {
     el.addEventListener(eventName, listener)
-    this.diffHunkDisposables.push({
+    bucket.push({
       dispose: () => el.removeEventListener(eventName, listener),
     })
   }
@@ -351,9 +626,468 @@ export class DiffEditorManager {
 
     node.append(createButton('revert', 'Revert'), createButton('stage', 'Stage'))
 
-    this.createDomDisposable(node, 'mouseenter', () => this.cancelScheduledHideDiffHunkActions())
-    this.createDomDisposable(node, 'mouseleave', () => this.scheduleHideDiffHunkActions())
+    this.createDomDisposable(this.diffHunkDisposables, node, 'mouseenter', () => this.cancelScheduledHideDiffHunkActions())
+    this.createDomDisposable(this.diffHunkDisposables, node, 'mouseleave', () => this.scheduleHideDiffHunkActions())
     return node
+  }
+
+  private cloneSerializableValue<T>(value: T): T {
+    if (typeof structuredClone === 'function')
+      return structuredClone(value)
+    return JSON.parse(JSON.stringify(value)) as T
+  }
+
+  private capturePersistedDiffUnchangedState() {
+    if (!this.diffEditorView)
+      return
+    const state = this.diffEditorView.saveViewState()
+    if (!state?.modelState) {
+      this.diffPersistedUnchangedModelState = null
+      return
+    }
+    this.diffPersistedUnchangedModelState = this.cloneSerializableValue(state.modelState)
+  }
+
+  private scheduleCapturePersistedDiffUnchangedState(frames = 1) {
+    this.rafScheduler.schedule('capture-diff-unchanged-state', () => {
+      let remaining = Math.max(0, frames)
+      const step = () => {
+        if (remaining > 0) {
+          remaining--
+          requestAnimationFrame(step)
+          return
+        }
+        this.capturePersistedDiffUnchangedState()
+      }
+      step()
+    })
+  }
+
+  private restorePersistedDiffUnchangedState() {
+    if (!this.diffEditorView || !this.diffPersistedUnchangedModelState)
+      return
+    const current = this.diffEditorView.saveViewState()
+    if (!current)
+      return
+    this.diffEditorView.restoreViewState({
+      original: current.original,
+      modified: current.modified,
+      modelState: this.cloneSerializableValue(this.diffPersistedUnchangedModelState),
+    })
+  }
+
+  private scheduleRestorePersistedDiffUnchangedState() {
+    if (!this.diffPersistedUnchangedModelState)
+      return
+    this.rafScheduler.schedule('restore-diff-unchanged-state', () => {
+      requestAnimationFrame(() => {
+        this.restorePersistedDiffUnchangedState()
+      })
+    })
+  }
+
+  private bindPersistOnMouseRelease(bucket: monaco.IDisposable[], node: HTMLElement) {
+    this.createDomDisposable(bucket, node, 'mousedown', (event) => {
+      const mouseEvent = event as MouseEvent
+      if (mouseEvent.button !== 0)
+        return
+      const view = node.ownerDocument.defaultView
+      if (!view)
+        return
+      const handleMouseUp = () => {
+        view.removeEventListener('mouseup', handleMouseUp)
+        this.scheduleCapturePersistedDiffUnchangedState(1)
+      }
+      view.addEventListener('mouseup', handleMouseUp, { once: true })
+    })
+  }
+
+  private disposeDiffUnchangedRegionEnhancements() {
+    if (this.diffUnchangedRegionObserver) {
+      this.diffUnchangedRegionObserver.disconnect()
+      this.diffUnchangedRegionObserver = null
+    }
+
+    this.clearDiffUnchangedBridgeOverlay()
+
+    if (this.diffUnchangedRegionDisposables.length > 0) {
+      for (const d of this.diffUnchangedRegionDisposables) {
+        try {
+          d.dispose()
+        }
+        catch { }
+      }
+      this.diffUnchangedRegionDisposables.length = 0
+    }
+
+    this.rafScheduler.cancel('patch-diff-unchanged-regions')
+    this.rafScheduler.cancel('capture-diff-unchanged-state')
+    this.rafScheduler.cancel('restore-diff-unchanged-state')
+  }
+
+  private bindFocusVisibleClass(bucket: monaco.IDisposable[], node: HTMLElement) {
+    this.createDomDisposable(bucket, node, 'focus', () => node.classList.add('stream-monaco-focus-visible'))
+    this.createDomDisposable(bucket, node, 'blur', () => node.classList.remove('stream-monaco-focus-visible'))
+  }
+
+  private bindFocusWithinClass(bucket: monaco.IDisposable[], node: HTMLElement, className: string) {
+    this.createDomDisposable(bucket, node, 'focusin', () => node.classList.add(className))
+    this.createDomDisposable(bucket, node, 'focusout', () => {
+      requestAnimationFrame(() => {
+        if (node.matches(':focus-within'))
+          return
+        node.classList.remove(className)
+      })
+    })
+  }
+
+  private clearDiffUnchangedBridgeOverlay(removeContainer = true) {
+    if (this.lastContainer) {
+      const bridgedCenters = this.lastContainer.querySelectorAll<HTMLElement>('.stream-monaco-unchanged-bridge-source')
+      bridgedCenters.forEach(node => node.classList.remove('stream-monaco-unchanged-bridge-source'))
+    }
+
+    if (this.diffUnchangedBridgeOverlay)
+      this.diffUnchangedBridgeOverlay.replaceChildren()
+
+    if (this.diffUnchangedBridgeDisposables.length > 0) {
+      for (const d of this.diffUnchangedBridgeDisposables) {
+        try {
+          d.dispose()
+        }
+        catch { }
+      }
+      this.diffUnchangedBridgeDisposables.length = 0
+    }
+
+    if (removeContainer && this.diffUnchangedBridgeOverlay?.parentElement)
+      this.diffUnchangedBridgeOverlay.remove()
+    if (removeContainer)
+      this.diffUnchangedBridgeOverlay = null
+  }
+
+  private ensureDiffUnchangedBridgeOverlay() {
+    if (!this.lastContainer)
+      return null
+    if (!this.diffUnchangedBridgeOverlay) {
+      const overlay = document.createElement('div')
+      overlay.className = 'stream-monaco-diff-unchanged-overlay'
+      this.lastContainer.append(overlay)
+      this.diffUnchangedBridgeOverlay = overlay
+    }
+    return this.diffUnchangedBridgeOverlay
+  }
+
+  private dispatchSyntheticMouseDown(node: HTMLElement) {
+    const view = node.ownerDocument.defaultView
+    if (!view)
+      return
+    const rect = node.getBoundingClientRect()
+    node.dispatchEvent(new view.MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.left + (rect.width / 2),
+      clientY: rect.top + (rect.height / 2),
+    }))
+  }
+
+  private resolveDiffUnchangedMergeRole(node: HTMLElement): 'none' | 'primary' | 'secondary' {
+    const diffRoot = node.closest('.monaco-diff-editor.side-by-side')
+    if (!(diffRoot instanceof HTMLElement))
+      return 'none'
+
+    const nodeRect = node.getBoundingClientRect()
+    const nodeCenter = nodeRect.left + (nodeRect.width / 2)
+    const originalHost = this.diffEditorView?.getOriginalEditor().getContainerDomNode?.()
+    const modifiedHost = this.diffEditorView?.getModifiedEditor().getContainerDomNode?.()
+
+    if (originalHost instanceof HTMLElement && modifiedHost instanceof HTMLElement) {
+      const originalRect = originalHost.getBoundingClientRect()
+      const modifiedRect = modifiedHost.getBoundingClientRect()
+      const originalCenter = originalRect.left + (originalRect.width / 2)
+      const modifiedCenter = modifiedRect.left + (modifiedRect.width / 2)
+      return Math.abs(nodeCenter - originalCenter) <= Math.abs(nodeCenter - modifiedCenter)
+        ? 'secondary'
+        : 'primary'
+    }
+
+    const diffRect = diffRoot.getBoundingClientRect()
+    return nodeCenter < (diffRect.left + (diffRect.width / 2))
+      ? 'secondary'
+      : 'primary'
+  }
+
+  private patchDiffUnchangedCenter(node: HTMLElement) {
+    node.classList.add('stream-monaco-clickable')
+    node.title = 'Click to expand all hidden unchanged lines'
+    const mergeRole = this.resolveDiffUnchangedMergeRole(node)
+    const shouldUseMergedSecondary = mergeRole === 'secondary'
+    node.classList.toggle('stream-monaco-unchanged-merged-secondary', shouldUseMergedSecondary)
+    node.classList.toggle('stream-monaco-unchanged-merged-primary', mergeRole === 'primary')
+
+    const primary = node.children.item(0)
+    const meta = node.children.item(1)
+    if (primary instanceof HTMLElement)
+      primary.classList.add('stream-monaco-unchanged-primary')
+    if (meta instanceof HTMLElement) {
+      meta.classList.add('stream-monaco-unchanged-meta')
+      const metaChildren = Array.from(meta.children)
+      metaChildren.forEach((child, index) => {
+        if (!(child instanceof HTMLElement))
+          return
+        child.classList.remove(
+          'stream-monaco-unchanged-count',
+          'stream-monaco-unchanged-separator',
+          'stream-monaco-unchanged-breadcrumb',
+        )
+        if (index === 0)
+          child.classList.add('stream-monaco-unchanged-count')
+        else if (child.classList.contains('breadcrumb-item'))
+          child.classList.add('stream-monaco-unchanged-breadcrumb')
+        else child.classList.add('stream-monaco-unchanged-separator')
+      })
+    }
+
+    const action = node.querySelector('a')
+    if (action instanceof HTMLElement) {
+      action.classList.add('stream-monaco-unchanged-expand')
+      action.dataset.streamMonacoLabel = 'Expand all'
+      action.title = 'Expand all hidden lines'
+      action.setAttribute('aria-label', 'Expand all hidden lines')
+      action.toggleAttribute('aria-hidden', shouldUseMergedSecondary)
+      action.tabIndex = shouldUseMergedSecondary ? -1 : 0
+      if (action.dataset.streamMonacoExpandPatched !== 'true') {
+        action.dataset.streamMonacoExpandPatched = 'true'
+        this.createDomDisposable(this.diffUnchangedRegionDisposables, action, 'click', () => {
+          this.scheduleCapturePersistedDiffUnchangedState(1)
+        })
+      }
+    }
+
+    if (node.dataset.streamMonacoCenterPatched !== 'true') {
+      node.dataset.streamMonacoCenterPatched = 'true'
+      this.bindFocusWithinClass(this.diffUnchangedRegionDisposables, node, 'stream-monaco-focus-within')
+
+      const activate = () => {
+        const action = node.querySelector('a')
+        if (action instanceof HTMLElement)
+          action.click()
+      }
+
+      this.createDomDisposable(this.diffUnchangedRegionDisposables, node, 'click', (event) => {
+        const mouseEvent = event as MouseEvent
+        if (mouseEvent.button !== 0)
+          return
+        const target = event.target instanceof HTMLElement ? event.target : null
+        if (target?.closest('a, .breadcrumb-item'))
+          return
+        event.preventDefault()
+        activate()
+        this.scheduleCapturePersistedDiffUnchangedState(1)
+      })
+    }
+  }
+
+  private renderMergedDiffUnchangedBridge(secondaryNode: HTMLElement, primaryNode: HTMLElement) {
+    if (!this.lastContainer)
+      return
+    const overlay = this.ensureDiffUnchangedBridgeOverlay()
+    if (!overlay)
+      return
+
+    const containerRect = this.lastContainer.getBoundingClientRect()
+    const secondaryRect = secondaryNode.getBoundingClientRect()
+    const primaryRect = primaryNode.getBoundingClientRect()
+    const primaryStyle = globalThis.getComputedStyle(primaryNode)
+    const primaryAction = primaryNode.querySelector<HTMLElement>('.stream-monaco-unchanged-expand')
+    const primaryActionRect = primaryAction?.getBoundingClientRect()
+    const countSource = primaryNode.querySelector<HTMLElement>('.stream-monaco-unchanged-count')
+      ?? secondaryNode.querySelector<HTMLElement>('.stream-monaco-unchanged-count')
+    const countText = countSource?.textContent?.trim() || 'Hidden lines'
+    const editorSurface = primaryNode.closest<HTMLElement>('.monaco-editor') ?? primaryNode
+    const editorSurfaceStyle = globalThis.getComputedStyle(editorSurface)
+
+    secondaryNode.classList.add('stream-monaco-unchanged-bridge-source')
+    primaryNode.classList.add('stream-monaco-unchanged-bridge-source')
+
+    const bridge = document.createElement('div')
+    bridge.className = 'stream-monaco-diff-unchanged-bridge'
+    bridge.tabIndex = 0
+    bridge.setAttribute('role', 'button')
+    bridge.setAttribute('aria-label', `${countText}. Expand all hidden lines`)
+    bridge.title = 'Expand all hidden lines'
+    bridge.style.left = `${secondaryRect.left - containerRect.left}px`
+    bridge.style.top = `${primaryRect.top - containerRect.top}px`
+    bridge.style.width = `${primaryRect.right - secondaryRect.left}px`
+    bridge.style.height = `${Math.max(secondaryRect.height, primaryRect.height)}px`
+    bridge.style.color = primaryStyle.color
+    bridge.style.fontFamily = primaryStyle.fontFamily
+    bridge.style.fontSize = primaryStyle.fontSize
+    bridge.style.lineHeight = primaryStyle.lineHeight
+    bridge.style.setProperty('--stream-monaco-unchanged-fg', primaryStyle.color)
+    bridge.style.setProperty('--stream-monaco-editor-bg', editorSurfaceStyle.backgroundColor)
+
+    const visualPrimary = document.createElement('span')
+    visualPrimary.className = 'stream-monaco-unchanged-primary'
+    const visualAction = document.createElement('span')
+    visualAction.className = 'stream-monaco-unchanged-expand'
+    visualAction.dataset.streamMonacoLabel = 'Expand all'
+    visualAction.setAttribute('aria-hidden', 'true')
+    visualAction.innerHTML = '<span class="codicon codicon-unfold"></span>'
+    visualPrimary.append(visualAction)
+
+    const visualMeta = document.createElement('div')
+    visualMeta.className = 'stream-monaco-unchanged-meta'
+    const visualCount = document.createElement('span')
+    visualCount.className = 'stream-monaco-unchanged-count'
+    visualCount.textContent = countText
+    visualMeta.append(visualCount)
+
+    const spacer = document.createElement('span')
+    spacer.className = 'stream-monaco-unchanged-spacer'
+    spacer.style.width = `${primaryActionRect?.width ?? 102}px`
+
+    bridge.append(visualPrimary, visualMeta, spacer)
+    overlay.append(bridge)
+
+    this.bindFocusVisibleClass(this.diffUnchangedBridgeDisposables, bridge)
+    const activate = () => {
+      const action = primaryNode.querySelector<HTMLElement>('a, button')
+        ?? secondaryNode.querySelector<HTMLElement>('a, button')
+      if (action instanceof HTMLElement) {
+        action.click()
+        this.scheduleCapturePersistedDiffUnchangedState(1)
+      }
+    }
+
+    this.createDomDisposable(this.diffUnchangedBridgeDisposables, bridge, 'click', (event) => {
+      const mouseEvent = event as MouseEvent
+      if (mouseEvent.button !== 0)
+        return
+      event.preventDefault()
+      activate()
+    })
+    this.createDomDisposable(this.diffUnchangedBridgeDisposables, bridge, 'keydown', (event) => {
+      const keyboardEvent = event as KeyboardEvent
+      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ')
+        return
+      keyboardEvent.preventDefault()
+      activate()
+    })
+  }
+
+  private patchDiffUnchangedFoldGlyph(node: HTMLElement) {
+    if (node.dataset.streamMonacoFoldGlyphPatched === 'true')
+      return
+
+    node.dataset.streamMonacoFoldGlyphPatched = 'true'
+    node.tabIndex = 0
+    node.setAttribute('role', 'button')
+    node.setAttribute('aria-label', 'Collapse unchanged lines')
+    node.title = node.title || 'Collapse unchanged lines'
+    this.bindFocusVisibleClass(this.diffUnchangedRegionDisposables, node)
+    this.bindPersistOnMouseRelease(this.diffUnchangedRegionDisposables, node)
+    this.createDomDisposable(this.diffUnchangedRegionDisposables, node, 'keydown', (event) => {
+      const keyboardEvent = event as KeyboardEvent
+      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ')
+        return
+      keyboardEvent.preventDefault()
+      this.dispatchSyntheticMouseDown(node)
+      this.scheduleCapturePersistedDiffUnchangedState(1)
+    })
+  }
+
+  private scanAndPatchDiffUnchangedRegions() {
+    if (!this.lastContainer)
+      return
+
+    const centers = this.lastContainer.querySelectorAll<HTMLElement>('.diff-hidden-lines .center')
+    centers.forEach(node => this.patchDiffUnchangedCenter(node))
+    const partialRevealHandles = this.lastContainer.querySelectorAll<HTMLElement>('.diff-hidden-lines .top, .diff-hidden-lines .bottom')
+    partialRevealHandles.forEach((node) => {
+      node.removeAttribute('title')
+      node.removeAttribute('aria-label')
+      node.removeAttribute('role')
+      node.removeAttribute('tabindex')
+    })
+    this.clearDiffUnchangedBridgeOverlay(false)
+
+    const secondaryCenters = Array.from(centers)
+      .filter(node => node.classList.contains('stream-monaco-unchanged-merged-secondary'))
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+    const primaryCenters = Array.from(centers)
+      .filter(node => node.classList.contains('stream-monaco-unchanged-merged-primary'))
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+
+    const pairCount = Math.min(secondaryCenters.length, primaryCenters.length)
+    for (let i = 0; i < pairCount; i++) {
+      const secondaryNode = secondaryCenters[i]
+      const primaryNode = primaryCenters[i]
+      const topDelta = Math.abs(secondaryNode.getBoundingClientRect().top - primaryNode.getBoundingClientRect().top)
+      if (topDelta > 6)
+        continue
+      this.renderMergedDiffUnchangedBridge(secondaryNode, primaryNode)
+    }
+
+    const foldGlyphs = this.lastContainer.querySelectorAll<HTMLElement>('.fold-unchanged')
+    foldGlyphs.forEach(node => this.patchDiffUnchangedFoldGlyph(node))
+  }
+
+  private schedulePatchDiffUnchangedRegions() {
+    this.rafScheduler.schedule('patch-diff-unchanged-regions', () => {
+      this.scanAndPatchDiffUnchangedRegions()
+    })
+  }
+
+  private setupDiffUnchangedRegionEnhancements() {
+    this.disposeDiffUnchangedRegionEnhancements()
+    if (!this.diffEditorView || !this.lastContainer)
+      return
+    if (typeof document === 'undefined')
+      return
+
+    this.ensureDiffUiStyle()
+    const containerStyle = globalThis.getComputedStyle?.(this.lastContainer)
+    if (!containerStyle || containerStyle.position === 'static')
+      this.lastContainer.style.position = 'relative'
+    this.lastContainer.classList.add('stream-monaco-diff-root')
+    this.schedulePatchDiffUnchangedRegions()
+
+    if (typeof MutationObserver !== 'undefined') {
+      this.diffUnchangedRegionObserver = new MutationObserver((mutations) => {
+        const shouldRepatch = mutations.some((mutation) => {
+          const target = mutation.target instanceof HTMLElement ? mutation.target : null
+          if (target?.closest('.stream-monaco-diff-unchanged-overlay'))
+            return false
+          const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes]
+          if (changedNodes.length > 0 && changedNodes.every((node) => {
+            return node instanceof HTMLElement && node.classList.contains('stream-monaco-diff-unchanged-overlay')
+          })) {
+            return false
+          }
+          return true
+        })
+        if (shouldRepatch)
+          this.schedulePatchDiffUnchangedRegions()
+      })
+      this.diffUnchangedRegionObserver.observe(this.lastContainer, {
+        childList: true,
+        subtree: true,
+      })
+    }
+
+    const originalEditor = this.diffEditorView.getOriginalEditor()
+    const modifiedEditor = this.diffEditorView.getModifiedEditor()
+    const repatch = () => this.schedulePatchDiffUnchangedRegions()
+    this.diffUnchangedRegionDisposables.push(this.diffEditorView.onDidUpdateDiff(() => {
+      repatch()
+      this.scheduleRestorePersistedDiffUnchangedState()
+    }))
+    this.diffUnchangedRegionDisposables.push(originalEditor.onDidLayoutChange(repatch))
+    this.diffUnchangedRegionDisposables.push(modifiedEditor.onDidLayoutChange(repatch))
+    this.diffUnchangedRegionDisposables.push(originalEditor.onDidScrollChange(repatch))
+    this.diffUnchangedRegionDisposables.push(modifiedEditor.onDidScrollChange(repatch))
   }
 
   private setupDiffHunkInteractions() {
@@ -365,7 +1099,7 @@ export class DiffEditorManager {
     if (typeof document === 'undefined')
       return
 
-    this.ensureDiffHunkStyle()
+    this.ensureDiffUiStyle()
 
     const containerStyle = globalThis.getComputedStyle?.(this.lastContainer)
     if (!containerStyle || containerStyle.position === 'static')
@@ -1218,6 +1952,7 @@ export class DiffEditorManager {
     })
 
     this.maybeScrollDiffToBottom(this.modifiedModel.getLineCount(), this.lastKnownModifiedLineCount ?? undefined)
+    this.setupDiffUnchangedRegionEnhancements()
     this.setupDiffHunkInteractions()
 
     return this.diffEditorView
@@ -1411,6 +2146,7 @@ export class DiffEditorManager {
     this.rafScheduler.cancel('content-size-change-diff')
     this.rafScheduler.cancel('sync-last-known-modified')
     this.disposeDiffHunkInteractions()
+    this.disposeDiffUnchangedRegionEnhancements()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -1438,6 +2174,7 @@ export class DiffEditorManager {
     this.lastKnownOriginalCode = null
     this.lastKnownModifiedCode = null
     if (this.lastContainer) {
+      this.lastContainer.classList.remove('stream-monaco-diff-root')
       this.lastContainer.innerHTML = ''
       this.lastContainer = null
     }
@@ -1456,6 +2193,7 @@ export class DiffEditorManager {
     }
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
+    this.diffPersistedUnchangedModelState = null
   }
 
   safeClean() {
@@ -1471,6 +2209,7 @@ export class DiffEditorManager {
     }
     this.hideDiffHunkActions()
     this.cancelScheduledHideDiffHunkActions()
+    this.disposeDiffUnchangedRegionEnhancements()
 
     if (this.diffScrollWatcher) {
       this.diffScrollWatcher.dispose()
@@ -1499,6 +2238,7 @@ export class DiffEditorManager {
     }
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
+    this.diffPersistedUnchangedModelState = null
     this.rafScheduler.cancel('content-size-change-diff')
     this.rafScheduler.cancel('sync-last-known-modified')
   }
