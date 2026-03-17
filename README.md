@@ -37,6 +37,7 @@ The package exports helpers around theme/highlighter for advanced use:
 - `getOrCreateHighlighter(themes, languages): Promise<Highlighter>` — get or create a highlighter (managed by internal cache). If you need to call `codeToHtml` or `setTheme` manually, use this and handle loading/errors.
 
 Note:
+
 - If the target theme is already included in the `themes` you passed to `useMonaco()`, calling `monaco.editor.setTheme(themeName)` is fine.
 - If you switch to a theme that was not pre-registered (e.g. dynamic theme name like `andromeeda`), prefer `await setTheme(themeName)` from `useMonaco()`. It will ensure the theme is registered, and when possible it will also try to `loadTheme` on the underlying Shiki highlighter to avoid "Theme not found, you may need to load it first" errors.
 
@@ -44,49 +45,98 @@ Config: `useMonaco()` does not auto-sync an external Shiki highlighter; if you n
 
 ### API Reference
 
-#### useMonaco() Returns
+#### useMonaco(options?)
 
-The `useMonaco()` function returns an object with the following methods:
+##### Parameters
 
-##### Editor Management
-- **`createEditor(container, code, language)`** - Create and mount Monaco editor to a container
-- **`createDiffEditor(container, originalCode, modifiedCode, language)`** - Create and mount Diff editor
-- **`cleanupEditor()`** - Destroy editor and cleanup resources
-- **`getEditorView()`** - Get current editor instance (IStandaloneCodeEditor | null)
-- **`getDiffEditorView()`** - Get current Diff editor instance (IStandaloneDiffEditor | null)
-- **`getEditor()`** - Get Monaco's static editor object for calling static methods
+| Parameter                   | Type                                                         | Default                             | Description                                                                                |
+| --------------------------- | ------------------------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| `MAX_HEIGHT`                | `number \| string`                                           | `500`                               | Maximum editor height                                                                      |
+| `readOnly`                  | `boolean`                                                    | `true`                              | Whether the editor is read-only                                                            |
+| `themes`                    | `MonacoTheme[]`                                              | `['vitesse-dark', 'vitesse-light']` | Theme list; should include at least one dark and one light theme                           |
+| `languages`                 | `MonacoLanguage[]`                                           | built-in default language list      | Languages to register                                                                      |
+| `theme`                     | `string`                                                     | -                                   | Initial theme name                                                                         |
+| `isCleanOnBeforeCreate`     | `boolean`                                                    | `true`                              | Whether to dispose previously registered resources before creating a new editor            |
+| `onBeforeCreate`            | `function`                                                   | -                                   | Hook called before editor creation                                                         |
+| `autoScrollOnUpdate`        | `boolean`                                                    | `true`                              | Auto-scroll when content updates and the viewport is already near the bottom               |
+| `autoScrollInitial`         | `boolean`                                                    | `true`                              | Whether auto-scroll starts enabled                                                         |
+| `autoScrollThresholdPx`     | `number`                                                     | `32`                                | Pixel threshold for considering the viewport "near bottom"                                 |
+| `autoScrollThresholdLines`  | `number`                                                     | `2`                                 | Line-based threshold for considering the viewport "near bottom"                            |
+| `diffAutoScroll`            | `boolean`                                                    | `true`                              | Whether diff auto-scroll is enabled for the modified side                                  |
+| `diffHideUnchangedRegions`  | `boolean \| object`                                          | `true`                              | Fold unchanged regions in diff mode; accepts Monaco `hideUnchangedRegions` config too      |
+| `diffLineStyle`             | `'background' \| 'bar'`                                      | `'background'`                      | Controls whether changed lines are emphasized more as filled blocks or review-style bars   |
+| `diffAppearance`            | `'auto' \| 'light' \| 'dark'`                                | `'auto'`                            | Controls the diff shell chrome appearance while token colors still follow the active theme |
+| `diffUnchangedRegionStyle`  | `'line-info' \| 'line-info-basic' \| 'metadata' \| 'simple'` | `'line-info'`                       | Controls how collapsed unchanged regions are rendered                                      |
+| `diffHunkActionsOnHover`    | `boolean`                                                    | `false`                             | Enables split upper/lower hunk hover actions: `Revert` / `Stage`                           |
+| `diffHunkHoverHideDelayMs`  | `number`                                                     | `160`                               | Hide delay for hunk hover action widgets                                                   |
+| `onDiffHunkAction`          | `function`                                                   | -                                   | Hunk action callback; return `false` to skip built-in edits                                |
+| `revealDebounceMs`          | `number`                                                     | `75`                                | Debounce for auto-reveal during streaming updates                                          |
+| `revealStrategy`            | `'bottom' \| 'centerIfOutside' \| 'center'`                  | `'centerIfOutside'`                 | Reveal strategy used when auto-scrolling                                                   |
+| `revealBatchOnIdleMs`       | `number \| undefined`                                        | -                                   | Final idle-time reveal window for append-heavy scenarios                                   |
+| `updateThrottleMs`          | `number`                                                     | `50`                                | Time-based throttle for `updateCode`                                                       |
+| `diffUpdateThrottleMs`      | `number`                                                     | `50`                                | Time-based throttle for diff streaming updates                                             |
+| `minimalEditMaxChars`       | `number`                                                     | built-in constant                   | Fallback to `setValue` when documents are too large for minimal-edit diffing               |
+| `minimalEditMaxChangeRatio` | `number`                                                     | built-in constant                   | Fallback to `setValue` when the change ratio is too large                                  |
 
-##### Code Operations
-- **`updateCode(newCode, language)`** - Update editor content and language (incremental update when possible)
-- **`appendCode(appendText, language?)`** - Append text to the end of editor (optimized for streaming)
-- **`getCode()`** - **Get current code from editor**
-  - Returns `string` for normal editor
-  - Returns `{ original: string, modified: string }` for diff editor
-  - Returns `null` if no editor exists
-  - **Use case**: Get the latest code after user manually edits the editor or after programmatic updates
+`MonacoOptions` also includes Monaco's native editor and diff-editor construction options, so you can pass options such as `renderSideBySide`, `ignoreTrimWhitespace`, `originalEditable`, or `enableSplitViewResizing` directly.
 
-##### Diff Editor Operations
-- **`updateDiff(originalCode, modifiedCode, language?)`** - Update both sides of diff editor
-- **`updateOriginal(newCode, language?)`** - Update only the original side
-- **`updateModified(newCode, language?)`** - Update only the modified side
-- **`appendOriginal(appendText, language?)`** - Append to original side (streaming)
-- **`appendModified(appendText, language?)`** - Append to modified side (streaming)
-- **`getDiffModels()`** - Get both diff models: `{ original, modified }`
+##### Returns
 
-##### Theme & Language
-- **`setTheme(theme)`** - Switch editor theme (returns Promise)
-- **`setLanguage(language)`** - Switch editor language
-- **`getCurrentTheme()`** - Get current theme name
+| Method / property         | Type                                                                                                                  | Description                                                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `createEditor`            | `(container: HTMLElement, code: string, language: string) => Promise<MonacoEditorInstance>`                           | Create and mount a standalone editor                                                                                            |
+| `createDiffEditor`        | `(container: HTMLElement, original: string, modified: string, language: string) => Promise<MonacoDiffEditorInstance>` | Create and mount a diff editor                                                                                                  |
+| `cleanupEditor`           | `() => void`                                                                                                          | Dispose editor instances and cleanup resources                                                                                  |
+| `safeClean`               | `() => void`                                                                                                          | Cancel pending update queues/RAFs without fully tearing down the integration                                                    |
+| `updateCode`              | `(newCode: string, codeLanguage: string) => void`                                                                     | Update single-editor content and language                                                                                       |
+| `appendCode`              | `(appendText: string, codeLanguage?: string) => void`                                                                 | Append to the single editor, optimized for streaming                                                                            |
+| `updateDiff`              | `(original: string, modified: string, codeLanguage?: string) => void`                                                 | Update both sides of a diff editor                                                                                              |
+| `updateOriginal`          | `(newCode: string, codeLanguage?: string) => void`                                                                    | Update only the original side                                                                                                   |
+| `updateModified`          | `(newCode: string, codeLanguage?: string) => void`                                                                    | Update only the modified side                                                                                                   |
+| `appendOriginal`          | `(appendText: string, codeLanguage?: string) => void`                                                                 | Append to the original side                                                                                                     |
+| `appendModified`          | `(appendText: string, codeLanguage?: string) => void`                                                                 | Append to the modified side                                                                                                     |
+| `setDiffModels`           | `(models: DiffModelPair, options?: DiffModelTransitionOptions) => Promise<void>`                                      | Swap the whole diff model pair in place; same-content swaps prewarm Monaco's diff view model and preserve view state by default |
+| `setTheme`                | `(theme: MonacoTheme, force?: boolean) => Promise<void>`                                                              | Switch editor theme; `force=true` re-applies even if the theme is already active                                                |
+| `refreshDiffPresentation` | `() => void`                                                                                                          | Recompute diff chrome / unchanged overlay presentation without remounting                                                       |
+| `setLanguage`             | `(language: MonacoLanguage) => void`                                                                                  | Switch editor language                                                                                                          |
+| `getCurrentTheme`         | `() => string`                                                                                                        | Get the current theme name                                                                                                      |
+| `getEditor`               | `() => typeof monaco.editor`                                                                                          | Get Monaco's static editor API                                                                                                  |
+| `getEditorView`           | `() => MonacoEditorInstance \| null`                                                                                  | Get the current standalone editor instance                                                                                      |
+| `getDiffEditorView`       | `() => MonacoDiffEditorInstance \| null`                                                                              | Get the current diff editor instance                                                                                            |
+| `getDiffModels`           | `() => DiffModels`                                                                                                    | Get both diff models                                                                                                            |
+| `getMonacoInstance`       | `() => typeof monaco`                                                                                                 | Get the Monaco module instance                                                                                                  |
+| `setUpdateThrottleMs`     | `(ms: number) => void`                                                                                                | Change `updateCode` throttling at runtime                                                                                       |
+| `getUpdateThrottleMs`     | `() => number`                                                                                                        | Get the current `updateCode` throttle value                                                                                     |
+| `getCode`                 | `() => MonacoCodeValue`                                                                                               | Get the latest code value from the current editor or diff editor                                                                |
 
-##### Performance Control
-- **`setUpdateThrottleMs(ms)`** - Change update throttle at runtime
-- **`getUpdateThrottleMs()`** - Get current throttle value
+##### Exported TypeScript helpers
+
+The package exports named types for diff integration too:
+
+- `UseMonacoReturn`
+- `MonacoOptions`
+- `MonacoTheme`
+- `MonacoLanguage`
+- `DiffHideUnchangedRegions`
+- `DiffLineStyle`
+- `DiffAppearance`
+- `DiffUnchangedRegionStyle`
+- `DiffModels`
+- `DiffModelPair`
+- `DiffModelTransitionOptions`
+- `DiffCodeValue`
+- `MonacoCodeValue`
+- `DiffHunkActionContext`
+
+For a more complete integration walkthrough, see [Diff Integration Guide](docs/diff-integration.md).
 
 #### Diff streaming highlight tip
 
 Monaco's diff computation is async and cancels/restarts when models change. If you stream updates too frequently (e.g. per token / every frame), the diff may only finish once streaming stops, so the difference highlights appear "at the end".
 
-- Set `diffUpdateThrottleMs` (default: 50) to let the diff worker complete intermediate computations during streaming.
+- Set `diffUpdateThrottleMs` to let the diff worker complete intermediate computations during streaming.
+- The library defaults to `50ms`.
+- When `diffHideUnchangedRegions` is enabled, unchanged-region folding is deferred until diff streaming goes idle to avoid collapsing and re-expanding while content is still arriving.
 - Set it to `0` to restore pure RAF batching (most responsive, but may delay diff highlights under heavy streaming).
 
 ### Install
@@ -162,12 +212,22 @@ export function MonacoEditor() {
   })
 
   useEffect(() => {
-    if (containerRef.current)
-      createEditor(containerRef.current, 'console.log("Hello, Monaco!")', 'typescript')
+    if (containerRef.current) {
+      createEditor(
+        containerRef.current,
+        'console.log("Hello, Monaco!")',
+        'typescript',
+      )
+    }
     return () => cleanupEditor()
   }, [])
 
-  return <div ref={containerRef} style={{ height: 500, border: '1px solid #e0e0e0' }} />
+  return (
+    <div
+      ref={containerRef}
+      style={{ height: 500, border: '1px solid #e0e0e0' }}
+    />
+  )
 }
 ```
 
@@ -262,18 +322,10 @@ function getCurrentCode() {
 <template>
   <div>
     <div class="controls">
-      <button @click="switchTheme('github-dark')">
-        Dark
-      </button>
-      <button @click="switchTheme('github-light')">
-        Light
-      </button>
-      <button @click="switchLanguage('typescript')">
-        TypeScript
-      </button>
-      <button @click="switchLanguage('python')">
-        Python
-      </button>
+      <button @click="switchTheme('github-dark')">Dark</button>
+      <button @click="switchTheme('github-light')">Light</button>
+      <button @click="switchLanguage('typescript')">TypeScript</button>
+      <button @click="switchLanguage('python')">Python</button>
     </div>
     <div ref="editorContainer" class="editor" />
   </div>
@@ -387,8 +439,17 @@ onMounted(async () => {
 Diff UX options:
 
 - `diffHideUnchangedRegions` (default `true`): fold unchanged ranges (can pass Monaco `hideUnchangedRegions` object).
+- `diffLineStyle` (default `background`): choose the changed-line emphasis style. Use `bar` for a subtler review-style leading bar treatment.
+- `diffAppearance` (default `auto`): controls the diff shell chrome; use `light` / `dark` to force the surface style while keeping token colors theme-driven.
+- `diffUnchangedRegionStyle` (default `line-info`): choose collapsed unchanged-region rendering: `line-info`, `line-info-basic`, and `metadata` use compact 32px rows, while `line-info-basic` keeps the wider legacy rail and `simple` uses a tighter 28px row.
 - `diffHunkActionsOnHover` (default `false`): explicitly set `true` to enable split upper/lower `Revert` and `Stage` on hunk hover.
 - `onDiffHunkAction(context)` (optional): return `false` to intercept and skip built-in model edits.
+- Built-in `Revert` / `Stage` only edit Monaco models locally. They do not run `git revert`, `git add`, or `git stash` unless you intercept `onDiffHunkAction` and connect your own backend flow.
+
+Full integration guide:
+
+- [Diff Integration Guide](docs/diff-integration.md)
+- exported TS helpers include `UseMonacoReturn`, `DiffLineStyle`, `DiffAppearance`, `DiffUnchangedRegionStyle`, `DiffModels`, and `DiffHunkActionContext`
 
 Example 1: enable unchanged folding + hover Revert/Stage
 
@@ -403,13 +464,14 @@ const { createDiffEditor } = useMonaco({
     minimumLineCount: 4,
     revealLineCount: 2,
   },
+  diffLineStyle: 'bar',
   diffHunkActionsOnHover: true,
 })
 
 await createDiffEditor(container, original, modified, 'typescript')
 ```
 
-Example 2: fully intercept Revert/Stage and handle your own stash/patch flow
+Example 2: fully intercept Revert/Stage and handle your own Git/stash/patch flow
 
 ```ts
 useMonaco({
@@ -438,6 +500,47 @@ useMonaco({
   },
 })
 ```
+
+Example 3: backend returns refreshed file contents, then the client calls `updateDiff(...)`
+
+```ts
+const monaco = useMonaco({
+  diffHideUnchangedRegions: true,
+  diffHunkActionsOnHover: true,
+  onDiffHunkAction: async (ctx) => {
+    const response = await fetch('/api/git/hunks/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: ctx.action,
+        side: ctx.side,
+        range: ctx.lineChange,
+        original: ctx.originalModel.getValue(),
+        modified: ctx.modifiedModel.getValue(),
+      }),
+    })
+
+    const next = await response.json()
+    monaco.updateDiff(next.original, next.modified, 'typescript')
+    return false
+  },
+})
+```
+
+Important:
+
+- Hover `Revert` is hunk-level undo, not `git revert <commit>`.
+- Hover `Stage` is closer to `git add -p` / `git apply --cached`.
+- If you want a stash flow, treat `onDiffHunkAction` as a patch-intent callback and hand the selected half-hunk to your backend stash or patch queue.
+- If your backend returns refreshed file contents, `updateDiff(...)` is the most direct way to reflect the Git-applied result in the diff UI. The repo includes `pnpm run validate:diff-hunk-update-diff-flow` for that pattern.
+- See [Diff Integration Guide](docs/diff-integration.md) for a concrete Git binding pattern.
+
+Visual review helpers:
+
+- `pnpm run shot:diff-ux -- background /tmp/stream-monaco-diff-reference.png pierre-reference`
+  Captures the Pierre-like reference scene with a fixed viewport, file chrome, and `-1 / +1` single-hunk diff. Pass an optional fourth argument such as `snazzy-light`.
+- `pnpm run compare:diff-ux -- /tmp/stream-monaco-diff-reference.png background pierre-reference`
+  Re-captures the same scene and prints screenshot metrics such as `diffPixels`, `mismatchRatio`, and `exactMatch`. Pass an optional final theme argument to compare the exact same palette.
 
 ### Shiki highlighter (advanced)
 
@@ -480,7 +583,7 @@ For pure tail-append, prefer explicit `appendCode` / `appendOriginal` / `appendM
 
 ### Best practices
 
-1) Performance: only load required languages
+1. Performance: only load required languages
 
 ```ts
 const { createEditor } = useMonaco({
@@ -489,7 +592,7 @@ const { createEditor } = useMonaco({
 })
 ```
 
-2) Memory management: dispose on unmount
+2. Memory management: dispose on unmount
 
 ```vue
 <script setup>
@@ -504,7 +607,7 @@ onUnmounted(() => {
 </script>
 ```
 
-3) Follow system theme (via your own dark state) and call `setTheme` accordingly.
+3. Follow system theme (via your own dark state) and call `setTheme` accordingly.
 
 ### Use without Vue (Vanilla)
 
@@ -584,7 +687,9 @@ If you load Monaco via CDN/AMD (e.g. `<script src=".../vs/loader.js">`), `stream
 ```ts
 import { ensureMonacoWorkersLegacy } from 'stream-monaco/legacy'
 
-ensureMonacoWorkersLegacy({ baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/' })
+ensureMonacoWorkersLegacy({
+  baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/',
+})
 ```
 
 ### Development

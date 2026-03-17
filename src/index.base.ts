@@ -1,15 +1,33 @@
 import type { WatchStopHandle } from './reactivity'
-import type { MonacoLanguage, MonacoOptions, MonacoTheme } from './type'
+import type {
+  DiffModelPair,
+  DiffModelTransitionOptions,
+  MonacoLanguage,
+  MonacoOptions,
+  MonacoTheme,
+  UseMonacoReturn,
+} from './type'
 
 import { detectLanguage, processedLanguage } from './code.detect'
-import { defaultLanguages, defaultRevealDebounceMs, defaultThemes, minimalEditMaxChangeRatio, minimalEditMaxChars, padding } from './constant'
+import {
+  defaultLanguages,
+  defaultRevealDebounceMs,
+  defaultThemes,
+  minimalEditMaxChangeRatio,
+  minimalEditMaxChars,
+  padding,
+} from './constant'
 import { DiffEditorManager } from './core/DiffEditorManager'
 import { EditorManager } from './core/EditorManager'
 import { computeMinimalEdit } from './minimalEdit'
 import * as monaco from './monaco-shim'
 import { computed } from './reactivity'
 import { createRafScheduler } from './utils/raf'
-import { clearHighlighterCache, getOrCreateHighlighter, registerMonacoThemes } from './utils/registerMonacoThemes'
+import {
+  clearHighlighterCache,
+  getOrCreateHighlighter,
+  registerMonacoThemes,
+} from './utils/registerMonacoThemes'
 
 // Monaco theme is effectively global within a runtime (monaco.editor.setTheme).
 // When many code blocks mount/virtualize concurrently, some editors may be
@@ -57,7 +75,9 @@ let globalAppliedThemeName: string | null = null
  *   updateModified: (newCode: string, codeLanguage?: string) => void,
  *   appendOriginal: (appendText: string, codeLanguage?: string) => void,
  *   appendModified: (appendText: string, codeLanguage?: string) => void,
+ *   setDiffModels: (models: DiffModelPair, options?: DiffModelTransitionOptions) => Promise<void>,
  *   setTheme: (theme: MonacoTheme) => Promise<void>,
+ *   refreshDiffPresentation: () => void,
  *   setLanguage: (language: MonacoLanguage) => void,
  *   getCurrentTheme: () => string,
  *   getEditor: () => typeof monaco.editor,
@@ -77,7 +97,9 @@ let globalAppliedThemeName: string | null = null
  * @property {Function} updateModified - 仅更新 Diff 的 modified 内容（增量更新）
  * @property {Function} appendOriginal - 在 Diff 的 original 末尾追加（显式流式场景）
  * @property {Function} appendModified - 在 Diff 的 modified 末尾追加（显式流式场景）
+ * @property {Function} setDiffModels - 切换为一对新的 Diff models；当内容未变化时自动走保留视图状态的无抖动路径
  * @property {Function} setTheme - 切换编辑器主题，返回 Promise，在主题应用完成时 resolve
+ * @property {Function} refreshDiffPresentation - 在不 remount 的情况下，重算 diff chrome / unchanged overlay 的表现层
  * @property {Function} setLanguage - 切换编辑器语言
  * @property {Function} getCurrentTheme - 获取当前主题名称
  * @property {Function} getEditor - 获取 Monaco 的静态 editor 对象（用于静态方法调用）
@@ -108,7 +130,7 @@ let globalAppliedThemeName: string | null = null
  * setTheme('vitesse-light')
  * ```
  */
-function useMonaco(monacoOptions: MonacoOptions = {}) {
+function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
   // per-instance disposables (avoid cross-instance interference)
   const disposals: monaco.IDisposable[] = []
   // 清除之前在 onBeforeCreate 中注册的资源
@@ -126,7 +148,10 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   let modifiedModel: monaco.editor.ITextModel | null = null
   let _hasScrollBar = false
 
-  const themes = (monacoOptions.themes && monacoOptions.themes?.length) ? monacoOptions.themes : defaultThemes
+  const themes
+    = monacoOptions.themes && monacoOptions.themes?.length
+      ? monacoOptions.themes
+      : defaultThemes
   if (!Array.isArray(themes) || themes.length < 2) {
     throw new Error(
       'Monaco themes must be an array with at least two themes: [darkTheme, lightTheme]',
@@ -162,8 +187,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   let lastContainer: HTMLElement | null = null
   let lastKnownCode: string | null = null
   // Allow overriding heuristics and throttling via options
-  const minimalEditMaxCharsLocal = (monacoOptions as any).minimalEditMaxChars ?? minimalEditMaxChars
-  const minimalEditMaxChangeRatioLocal = (monacoOptions as any).minimalEditMaxChangeRatio ?? minimalEditMaxChangeRatio
+  const minimalEditMaxCharsLocal
+    = (monacoOptions as any).minimalEditMaxChars ?? minimalEditMaxChars
+  const minimalEditMaxChangeRatioLocal
+    = (monacoOptions as any).minimalEditMaxChangeRatio
+      ?? minimalEditMaxChangeRatio
   // 时间节流（ms），0 表示仅使用 RAF 合并。
   // 默认为了在高频流式写入场景下减轻 CPU，使用 50ms 的默认节流。
   // 用户可以通过 monacoOptions.updateThrottleMs 覆盖（设为 0 恢复仅 RAF 合并行为）。
@@ -185,16 +213,16 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   const appendBuffer: string[] = []
   let appendBufferScheduled = false
   // Diff 自动滚动控制由 DiffEditorManager 负责
-  const currentTheme = computed<string>(() =>
-    monacoOptions.theme
-    ?? (typeof themes[0] === 'string'
-      ? themes[0]
-      : (themes[0] as any).name),
+  const currentTheme = computed<string>(
+    () =>
+      monacoOptions.theme
+      ?? (typeof themes[0] === 'string' ? themes[0] : (themes[0] as any).name),
   )
   // Track the latest theme requested via setTheme(). This prevents the
   // initialization path (which otherwise falls back to `themes[0]`) from
   // overwriting a theme chosen before createEditor/createDiffEditor runs.
-  let requestedThemeName: string | null = monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
+  let requestedThemeName: string | null
+    = monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
   let themeWatcher: WatchStopHandle | null = null
 
   // RAF scheduler (injectable time source possible via utils)
@@ -215,8 +243,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       // Shiki throws: "Theme <name> not found, you may need to load it first"
       // If the highlighter supports incremental loading, attempt it once.
       const lower = message.toLowerCase()
-      const looksLikeMissingThemeError = lower.includes('theme') && lower.includes('not found')
-      if (typeof highlighter.loadTheme === 'function' && looksLikeMissingThemeError) {
+      const looksLikeMissingThemeError
+        = lower.includes('theme') && lower.includes('not found')
+      if (
+        typeof highlighter.loadTheme === 'function'
+        && looksLikeMissingThemeError
+      ) {
         await highlighter.loadTheme(themeName)
         await highlighter.setTheme(themeName)
         return
@@ -225,7 +257,10 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     }
   }
 
-  async function setThemeInternal(theme: MonacoTheme, force = false): Promise<void> {
+  async function setThemeInternal(
+    theme: MonacoTheme,
+    force = false,
+  ): Promise<void> {
     const themeName = typeof theme === 'string' ? theme : (theme as any).name
 
     globalThemeRequestSeq += 1
@@ -253,15 +288,26 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       return
     }
 
-    const availableNames = themes.map(t => (typeof t === 'string' ? t : (t as any).name))
+    const availableNames = themes.map(t =>
+      typeof t === 'string' ? t : (t as any).name,
+    )
     if (!availableNames.includes(themeName)) {
       try {
         const extended = availableNames.concat(themeName)
-        const maybeHighlighter = await registerMonacoThemes(extended as any, languages)
-        await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(() => undefined)
+        const maybeHighlighter = await registerMonacoThemes(
+          extended as any,
+          languages,
+        )
+        await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(
+          () => undefined,
+        )
       }
       catch {
-        console.warn(`Theme "${themeName}" is not registered and automatic registration failed. Available themes: ${availableNames.join(', ')}`)
+        console.warn(
+          `Theme "${themeName}" is not registered and automatic registration failed. Available themes: ${availableNames.join(
+            ', ',
+          )}`,
+        )
         return
       }
     }
@@ -273,6 +319,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     try {
       monaco.editor.setTheme(themeName)
       globalAppliedThemeName = themeName
+      monacoOptions.theme = themeName as any
     }
     catch {
       try {
@@ -282,7 +329,10 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         }
         monaco.editor.setTheme(themeName)
         globalAppliedThemeName = themeName
-        await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(() => undefined)
+        monacoOptions.theme = themeName as any
+        await tryLoadAndSetShikiTheme(maybeHighlighter, themeName).catch(
+          () => undefined,
+        )
       }
       catch (err2) {
         console.warn(`Failed to set theme "${themeName}":`, err2)
@@ -292,6 +342,13 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
 
     if (token !== globalThemeRequestSeq) {
       return
+    }
+
+    try {
+      diffMgr?.notifyThemeChange(themeName as any)
+    }
+    catch (err) {
+      console.warn('diff theme sync threw an error:', err)
     }
 
     // call user callback if provided; await to allow callers to observe completion
@@ -306,8 +363,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   }
 
   async function ensureThemeRegistered(themeName: string) {
-    const availableNames = themes.map(t => (typeof t === 'string' ? t : (t as any).name))
-    const list = availableNames.includes(themeName) ? themes : (themes.concat(themeName) as any)
+    const availableNames = themes.map(t =>
+      typeof t === 'string' ? t : (t as any).name,
+    )
+    const list = availableNames.includes(themeName)
+      ? themes
+      : (themes.concat(themeName) as any)
     await registerMonacoThemes(list as any, languages)
   }
 
@@ -320,7 +381,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     if (_hasScrollBar)
       return true
     const ch = cachedComputedHeight ?? computedHeight(editorView)
-    return _hasScrollBar = (editorView.getScrollHeight!() > ch + padding / 2)
+    return (_hasScrollBar = editorView.getScrollHeight!() > ch + padding / 2)
   }
   // 在满足条件时滚动到底部，否则尊重用户滚动状态
   // debounce id for reveal (module-scope for top-level helper)
@@ -335,21 +396,27 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         clearTimeout(revealDebounceId)
         revealDebounceId = null
       }
-      revealDebounceId = (setTimeout(() => {
+      revealDebounceId = setTimeout(() => {
         revealDebounceId = null
         rafScheduler.schedule('reveal', () => {
           try {
-            const ScrollType: any = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
-            if (ScrollType && typeof ScrollType.Smooth !== 'undefined')
-              editorView!.revealLineInCenterIfOutsideViewport(line, ScrollType.Smooth)
-            else
+            const ScrollType: any
+              = (monaco as any).ScrollType || (monaco as any).editor?.ScrollType
+            if (ScrollType && typeof ScrollType.Smooth !== 'undefined') {
+              editorView!.revealLineInCenterIfOutsideViewport(
+                line,
+                ScrollType.Smooth,
+              )
+            }
+            else {
               editorView!.revealLineInCenterIfOutsideViewport(line)
+            }
           }
           catch {
             // ignore reveal errors
           }
         })
-      }, revealDebounceMs) as unknown) as number
+      }, revealDebounceMs) as unknown as number
     }
   }
 
@@ -374,7 +441,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
 
     // Determine initial theme: prefer the theme requested via setTheme(),
     // otherwise use explicit option/computed default.
-    const initialThemeName = requestedThemeName ?? monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
+    const initialThemeName
+      = monacoOptions.theme
+        ?? requestedThemeName
+        ?? globalRequestedThemeName
+        ?? currentTheme.value
     await ensureThemeRegistered(initialThemeName)
 
     editorMgr = new EditorManager(
@@ -387,7 +458,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       autoScrollThresholdLines,
       monacoOptions.revealDebounceMs,
     )
-    editorView = await editorMgr.createEditor(container, code, language, initialThemeName)
+    editorView = await editorMgr.createEditor(
+      container,
+      code,
+      language,
+      initialThemeName,
+    )
 
     // If updateCode was called while createEditor was awaiting theme registration,
     // apply the latest queued update once the editor is ready.
@@ -435,7 +511,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         disposals.push(...ds)
     }
 
-    const initialThemeName = requestedThemeName ?? monacoOptions.theme ?? globalRequestedThemeName ?? currentTheme.value
+    const initialThemeName
+      = monacoOptions.theme
+        ?? requestedThemeName
+        ?? globalRequestedThemeName
+        ?? currentTheme.value
     await ensureThemeRegistered(initialThemeName)
     try {
       monaco.editor.setTheme(initialThemeName)
@@ -456,7 +536,13 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       monacoOptions.revealDebounceMs,
       (monacoOptions as any).diffUpdateThrottleMs,
     )
-    diffEditorView = await diffMgr.createDiffEditor(container, originalCode, modifiedCode, language, initialThemeName)
+    diffEditorView = await diffMgr.createDiffEditor(
+      container,
+      originalCode,
+      modifiedCode,
+      language,
+      initialThemeName,
+    )
 
     if (typeof monacoOptions.onThemeChange === 'function') {
       monacoOptions.onThemeChange(initialThemeName as any)
@@ -534,8 +620,12 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       const processedCodeLanguage = codeLanguage
         ? processedLanguage(codeLanguage)
         : model.getLanguageId()
-      if (processedCodeLanguage && model.getLanguageId() !== processedCodeLanguage)
+      if (
+        processedCodeLanguage
+        && model.getLanguageId() !== processedCodeLanguage
+      ) {
         monaco.editor.setModelLanguage(model, processedCodeLanguage)
+      }
 
       // Fast-path: update lastKnownCode immediately when we can to avoid
       // model.getValue() synchronous reads in later flushes
@@ -566,7 +656,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       const maxChars = minimalEditMaxCharsLocal
       const ratio = minimalEditMaxChangeRatioLocal
       const maxLen = Math.max(prev.length, next.length)
-      const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
+      const changeRatio
+        = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
       if (prev.length + next.length > maxChars || changeRatio > ratio) {
         const prevLineCount = model.getLineCount()
         model.setValue(next)
@@ -578,7 +669,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         return
       }
     }
-    catch { }
+    catch {}
 
     // 完全相同无需处理
     const res = computeMinimalEdit(prev, next)
@@ -685,7 +776,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       const maxChars = minimalEditMaxCharsLocal
       const ratio = minimalEditMaxChangeRatioLocal
       const maxLen = Math.max(prevCode.length, newCode.length)
-      const changeRatio = maxLen > 0 ? Math.abs(newCode.length - prevCode.length) / maxLen : 0
+      const changeRatio
+        = maxLen > 0 ? Math.abs(newCode.length - prevCode.length) / maxLen : 0
       if (prevCode.length + newCode.length > maxChars || changeRatio > ratio) {
         const prevLineCount = model.getLineCount()
         model.setValue(newCode)
@@ -706,7 +798,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       applyMinimalEdit(prevCode, newCode)
       lastKnownCode = newCode
       const newLineCount = model.getLineCount()
-      const prevLineCount = (prevCode ? prevCode.split('\n').length : 0) || model.getLineCount()
+      const prevLineCount
+        = (prevCode ? prevCode.split('\n').length : 0) || model.getLineCount()
       if (newLineCount !== prevLineCount) {
         maybeScrollToBottom(newLineCount)
       }
@@ -746,12 +839,16 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       const lastLine = model.getLineCount()
       const lastColumn = model.getLineMaxColumn(lastLine)
       const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
-      const isReadOnly = editorView.getOption(monaco.editor.EditorOption.readOnly)
+      const isReadOnly = editorView.getOption(
+        monaco.editor.EditorOption.readOnly,
+      )
       if (isReadOnly) {
         model.applyEdits([{ range, text, forceMoveMarkers: true }])
       }
       else {
-        editorView.executeEdits('append', [{ range, text, forceMoveMarkers: true }])
+        editorView.executeEdits('append', [
+          { range, text, forceMoveMarkers: true },
+        ])
       }
       // update lastKnownCode if present
       if (lastKnownCode != null) {
@@ -795,11 +892,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         if (updateThrottleTimer != null)
           return
         const wait = updateThrottleMs - since
-        updateThrottleTimer = (setTimeout(() => {
+        updateThrottleTimer = setTimeout(() => {
           updateThrottleTimer = null
           // use raf again to preserve batching semantics
           rafScheduler.schedule('update', () => flushPendingUpdate())
-        }, wait) as unknown) as number
+        }, wait) as unknown as number
       })
     }
   }
@@ -818,7 +915,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   // Diff 追加批处理由 DiffEditorManager 负责
 
   // 更新 Diff（合并同帧，增量写入）
-  function updateDiff(originalCode: string, modifiedCode: string, codeLanguage?: string) {
+  function updateDiff(
+    originalCode: string,
+    modifiedCode: string,
+    codeLanguage?: string,
+  ) {
     if (diffMgr)
       diffMgr.updateDiff(originalCode, modifiedCode, codeLanguage)
   }
@@ -846,6 +947,23 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
       diffMgr.appendModified(appendText, codeLanguage)
   }
 
+  async function setDiffModels(
+    models: DiffModelPair,
+    options?: DiffModelTransitionOptions,
+  ) {
+    if (!diffMgr)
+      return
+    await diffMgr.setDiffModels(models, options)
+    const activeModels = diffMgr.getDiffModels()
+    originalModel = activeModels.original
+    modifiedModel = activeModels.modified
+  }
+
+  function refreshDiffPresentation() {
+    if (diffMgr)
+      diffMgr.refreshDiffPresentation()
+  }
+
   return {
     createEditor,
     createDiffEditor,
@@ -861,14 +979,14 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
         try {
           editorMgr.safeClean()
         }
-        catch { }
+        catch {}
       }
       // Diff 编辑器临时清理
       if (diffMgr) {
         try {
           diffMgr.safeClean()
         }
-        catch { }
+        catch {}
       }
       // reset transient scroll-related state so next stream starts clean
       _hasScrollBar = false
@@ -883,7 +1001,9 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     updateModified,
     appendOriginal,
     appendModified,
+    setDiffModels,
     setTheme: setThemeInternal,
+    refreshDiffPresentation,
     setLanguage(language: MonacoLanguage) {
       if (editorMgr) {
         editorMgr.setLanguage(language, languages as any)
@@ -905,11 +1025,20 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
           monaco.editor.setModelLanguage(modifiedModel, language)
       }
       else {
-        console.warn(`Language "${language}" is not registered. Available languages: ${languages.join(', ')}`)
+        console.warn(
+          `Language "${language}" is not registered. Available languages: ${languages.join(
+            ', ',
+          )}`,
+        )
       }
     },
     getCurrentTheme() {
-      return globalAppliedThemeName ?? requestedThemeName ?? globalRequestedThemeName ?? currentTheme.value
+      return (
+        globalAppliedThemeName
+        ?? requestedThemeName
+        ?? globalRequestedThemeName
+        ?? currentTheme.value
+      )
     },
     getEditor() {
       return monaco.editor
@@ -923,6 +1052,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
     },
     // 新增导出：获取 Diff 两侧模型
     getDiffModels() {
+      if (diffMgr)
+        return diffMgr.getDiffModels()
       return { original: originalModel, modified: modifiedModel }
     },
     getMonacoInstance() {
@@ -958,6 +1089,13 @@ function useMonaco(monacoOptions: MonacoOptions = {}) {
   }
 }
 
-export { clearHighlighterCache, defaultRevealDebounceMs, detectLanguage, getOrCreateHighlighter, registerMonacoThemes, useMonaco }
+export {
+  clearHighlighterCache,
+  defaultRevealDebounceMs,
+  detectLanguage,
+  getOrCreateHighlighter,
+  registerMonacoThemes,
+  useMonaco,
+}
 
 export * from './type'

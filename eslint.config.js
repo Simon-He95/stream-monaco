@@ -8,6 +8,7 @@ export default antfu(
       'src/worker/*.js',
       './test/',
       './scripts/',
+      'docs/',
     ],
   },
   {

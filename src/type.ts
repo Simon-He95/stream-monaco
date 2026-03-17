@@ -1,5 +1,9 @@
 import type * as monaco from 'monaco-editor'
-import type { Highlighter as _ShikiHighlighter, SpecialTheme, ThemeInput } from 'shiki'
+import type {
+  Highlighter as _ShikiHighlighter,
+  SpecialTheme,
+  ThemeInput,
+} from 'shiki'
 
 export type ShikiHighlighter = _ShikiHighlighter | any
 
@@ -292,8 +296,47 @@ export type MonacoLanguage
     | 'zig'
     | string
 
+export type DiffHideUnchangedRegions
+  = | boolean
+    | NonNullable<
+      monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']
+    >
+
+export type DiffLineStyle = 'background' | 'bar'
+
+export type DiffAppearance = 'auto' | 'light' | 'dark'
+
+export type DiffUnchangedRegionStyle
+  = | 'line-info'
+    | 'line-info-basic'
+    | 'metadata'
+    | 'simple'
+
+export interface DiffModels {
+  original: monaco.editor.ITextModel | null
+  modified: monaco.editor.ITextModel | null
+}
+
+export interface DiffModelPair {
+  original: monaco.editor.ITextModel
+  modified: monaco.editor.ITextModel
+}
+
+export interface DiffModelTransitionOptions {
+  codeLanguage?: MonacoLanguage
+  preserveViewState?: boolean
+}
+
+export interface DiffCodeValue {
+  original: string
+  modified: string
+}
+
+export type MonacoCodeValue = string | DiffCodeValue | null
+
 export interface MonacoOptions
-  extends monaco.editor.IStandaloneEditorConstructionOptions {
+  extends monaco.editor.IStandaloneEditorConstructionOptions,
+  monaco.editor.IDiffEditorConstructionOptions {
   MAX_HEIGHT?: number | string
   readOnly?: boolean
   themes?: MonacoTheme[]
@@ -335,9 +378,36 @@ export interface MonacoOptions
    *
    * Default: `true`
    */
-  diffHideUnchangedRegions?:
-    | boolean
-    | NonNullable<monaco.editor.IDiffEditorConstructionOptions['hideUnchangedRegions']>
+  diffHideUnchangedRegions?: DiffHideUnchangedRegions
+  /**
+   * Controls how changed lines are visually emphasized in the diff editor.
+   * - `background`: richer filled blocks for added/removed lines
+   * - `bar`: subtler fill with stronger leading bars, closer to review UIs
+   *
+   * Default: `background`
+   */
+  diffLineStyle?: DiffLineStyle
+  /**
+   * Controls the overall chrome appearance of the diff editor shell.
+   * - `auto`: infer light/dark appearance from the active Monaco theme
+   * - `light`: force light diff chrome
+   * - `dark`: force dark diff chrome
+   *
+   * Token colors still follow the active Monaco/Shiki theme.
+   *
+   * Default: `auto`
+   */
+  diffAppearance?: DiffAppearance
+  /**
+   * Controls how collapsed unchanged regions are rendered in the diff editor.
+   * - `line-info`: line-info bars with line-number-width reveal buttons
+   * - `line-info-basic`: legacy line-info bars with full-width reveal rail
+   * - `metadata`: unified-diff-style hunk metadata such as `@@ -59,9 +59,11 @@`
+   * - `simple`: minimal gray placeholder bar without text
+   *
+   * Default: `line-info`
+   */
+  diffUnchangedRegionStyle?: DiffUnchangedRegionStyle
   /**
    * Enable hover actions for each diff hunk split part (upper/lower):
    * local `revert` and `stage`.
@@ -353,7 +423,9 @@ export interface MonacoOptions
    * Optional interception callback for hunk hover actions.
    * Return `false` to prevent the built-in model edit behavior.
    */
-  onDiffHunkAction?: (context: DiffHunkActionContext) => void | boolean
+  onDiffHunkAction?: (
+    context: DiffHunkActionContext,
+  ) => void | boolean | Promise<void | boolean>
   /**
    * Debounce time (ms) to coalesce multiple reveal requests into a single
    * reveal. Useful for streaming/append scenarios. Default: 75
@@ -430,4 +502,47 @@ export interface DiffHunkActionContext {
   lineChange: monaco.editor.ILineChange
   originalModel: monaco.editor.ITextModel
   modifiedModel: monaco.editor.ITextModel
+}
+
+export interface UseMonacoReturn {
+  createEditor: (
+    container: HTMLElement,
+    code: string,
+    language: string,
+  ) => Promise<monaco.editor.IStandaloneCodeEditor>
+  createDiffEditor: (
+    container: HTMLElement,
+    originalCode: string,
+    modifiedCode: string,
+    language: string,
+  ) => Promise<monaco.editor.IStandaloneDiffEditor>
+  cleanupEditor: () => void
+  safeClean: () => void
+  updateCode: (newCode: string, codeLanguage: string) => void
+  appendCode: (appendText: string, codeLanguage?: string) => void
+  updateDiff: (
+    originalCode: string,
+    modifiedCode: string,
+    codeLanguage?: string,
+  ) => void
+  updateOriginal: (newCode: string, codeLanguage?: string) => void
+  updateModified: (newCode: string, codeLanguage?: string) => void
+  appendOriginal: (appendText: string, codeLanguage?: string) => void
+  appendModified: (appendText: string, codeLanguage?: string) => void
+  setDiffModels: (
+    models: DiffModelPair,
+    options?: DiffModelTransitionOptions,
+  ) => Promise<void>
+  setTheme: (theme: MonacoTheme, force?: boolean) => Promise<void>
+  refreshDiffPresentation: () => void
+  setLanguage: (language: MonacoLanguage) => void
+  getCurrentTheme: () => string
+  getEditor: () => typeof monaco.editor
+  getEditorView: () => monaco.editor.IStandaloneCodeEditor | null
+  getDiffEditorView: () => monaco.editor.IStandaloneDiffEditor | null
+  getDiffModels: () => DiffModels
+  getMonacoInstance: () => typeof monaco
+  setUpdateThrottleMs: (ms: number) => void
+  getUpdateThrottleMs: () => number
+  getCode: () => MonacoCodeValue
 }

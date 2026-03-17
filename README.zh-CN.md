@@ -21,11 +21,12 @@ IMPORTANT: Since v0.0.32 the library enables a default time-based throttle for `
 - 🔁 **可用于任意框架**：Vue、React、Svelte、Solid、Preact，或纯 JS/TS
 
 说明：内部响应式基于 `alien-signals` 的轻薄适配层实现，因此核心逻辑不再强依赖 Vue。Vue 仍然完全支持，但被标记为可选的 peer 依赖，使库在非 Vue 环境也可复用核心能力，且对现有 API 无破坏。
+
 - 🎨 **Shiki 高亮** - 使用 Shiki 实现高效的语法高亮，支持 TextMate 语法和 VS Code 主题
 - 📝 **流式更新** - 支持流式输入更新，实时响应代码变化
 
 - `registerMonacoThemes(themes, languages): Promise<Highlighter>` — 使用 shiki 创建或获取高亮器并把主题注册到 Monaco，返回解析为 shiki highlighter 的 Promise，便于复用（例如渲染页面片段）。
-`getOrCreateHighlighter(themes, languages): Promise<Highlighter>` — 直接获取或创建一个 highlighter（并受内部缓存管理）。如需直接控制 shiki highlighter（例如调用 `codeToHtml` 或 `setTheme`），请使用此方法并自行处理加载/错误逻辑。
+  `getOrCreateHighlighter(themes, languages): Promise<Highlighter>` — 直接获取或创建一个 highlighter（并受内部缓存管理）。如需直接控制 shiki highlighter（例如调用 `codeToHtml` 或 `setTheme`），请使用此方法并自行处理加载/错误逻辑。
 
 注意：如果你只使用 Monaco 编辑器并在 `createEditor` 时传入了全量 `themes`，通常只需调用 `monaco.editor.setTheme(themeName)` 即可。
 
@@ -224,18 +225,10 @@ function getCurrentCode() {
 <template>
   <div>
     <div class="controls">
-      <button @click="switchTheme('github-dark')">
-        暗色主题
-      </button>
-      <button @click="switchTheme('github-light')">
-        亮色主题
-      </button>
-      <button @click="switchLanguage('typescript')">
-        TypeScript
-      </button>
-      <button @click="switchLanguage('python')">
-        Python
-      </button>
+      <button @click="switchTheme('github-dark')">暗色主题</button>
+      <button @click="switchTheme('github-light')">亮色主题</button>
+      <button @click="switchLanguage('typescript')">TypeScript</button>
+      <button @click="switchLanguage('python')">Python</button>
     </div>
     <div ref="editorContainer" class="editor" />
   </div>
@@ -283,12 +276,22 @@ export function MonacoEditor() {
   })
 
   useEffect(() => {
-    if (containerRef.current)
-      createEditor(containerRef.current, 'console.log("Hello, Monaco!")', 'typescript')
+    if (containerRef.current) {
+      createEditor(
+        containerRef.current,
+        'console.log("Hello, Monaco!")',
+        'typescript',
+      )
+    }
     return () => cleanupEditor()
   }, [])
 
-  return <div ref={containerRef} style={{ height: 500, border: '1px solid #e0e0e0' }} />
+  return (
+    <div
+      ref={containerRef}
+      style={{ height: 500, border: '1px solid #e0e0e0' }}
+    />
+  )
 }
 ```
 
@@ -399,8 +402,17 @@ onMounted(async () => {
 Diff 体验增强相关配置：
 
 - `diffHideUnchangedRegions`（默认 `true`）：折叠未改动区块；也支持直接传 Monaco 的 `hideUnchangedRegions` 对象。
+- `diffLineStyle`（默认 `background`）：控制变更行的强调方式；传 `bar` 可切换到更克制的 review 风格竖条表现。
+- `diffAppearance`（默认 `auto`）：控制 diff 外层 chrome 的明暗风格；可强制 `light` / `dark`，代码 token 仍跟随当前主题。
+- `diffUnchangedRegionStyle`（默认 `line-info`）：控制折叠未改动区块的展示方式；`line-info`、`line-info-basic`、`metadata` 都使用更紧凑的 `32px` 折叠行，其中 `line-info-basic` 仍保留更宽的 legacy rail，`simple` 则是更紧的 `28px` 占位行。
 - `diffHunkActionsOnHover`（默认 `false`）：仅在显式传 `true` 时，hover 变更 hunk 才会显示上下分区的 `Revert` / `Stage`。
 - `onDiffHunkAction(context)`（可选）：返回 `false` 可拦截并跳过内置模型编辑逻辑。
+- 内置的 `Revert` / `Stage` 默认只会改 Monaco model，不会直接执行 `git revert`、`git add` 或 `git stash`；如果你要接真实 Git，需要通过 `onDiffHunkAction` 接到自己的后端流程。
+
+完整接入文档：
+
+- [Diff 接入指南](docs/diff-integration.zh-CN.md)
+- 已导出的 TS 类型包括 `UseMonacoReturn`、`DiffLineStyle`、`DiffAppearance`、`DiffUnchangedRegionStyle`、`DiffModels`、`DiffModelPair`、`DiffModelTransitionOptions`、`DiffHunkActionContext`
 
 示例 1：开启 hidden 区折叠 + hover Revert/Stage（可理解为局部回退与暂存）
 
@@ -415,13 +427,14 @@ const { createDiffEditor } = useMonaco({
     minimumLineCount: 4,
     revealLineCount: 2,
   },
+  diffLineStyle: 'bar',
   diffHunkActionsOnHover: true,
 })
 
 await createDiffEditor(container, original, modified, 'typescript')
 ```
 
-示例 2：完全接管 Revert/Stage 事件（接你自己的 stash / patch API）
+示例 2：完全接管 Revert/Stage 事件（接你自己的 Git / stash / patch API）
 
 ```ts
 useMonaco({
@@ -452,6 +465,47 @@ useMonaco({
 })
 ```
 
+示例 3：服务端返回刷新后的文件内容，前端再调用 `updateDiff(...)`
+
+```ts
+const monaco = useMonaco({
+  diffHideUnchangedRegions: true,
+  diffHunkActionsOnHover: true,
+  onDiffHunkAction: async (ctx) => {
+    const response = await fetch('/api/git/hunks/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: ctx.action,
+        side: ctx.side,
+        range: ctx.lineChange,
+        original: ctx.originalModel.getValue(),
+        modified: ctx.modifiedModel.getValue(),
+      }),
+    })
+
+    const next = await response.json()
+    monaco.updateDiff(next.original, next.modified, 'typescript')
+    return false
+  },
+})
+```
+
+注意：
+
+- hover `Revert` 表示 hunk 级别的局部回退，不等于 `git revert <commit>`。
+- hover `Stage` 更接近 `git add -p` / `git apply --cached`。
+- 如果你想做 stash 流程，建议把 `onDiffHunkAction` 当成“生成 patch 意图”的回调，把选中的 half-hunk 交给后端 stash 或 patch 队列。
+- 如果你的后端会返回刷新后的整份文件内容，前端最直接的做法就是调用 `updateDiff(...)` 把 Git 已应用后的结果回灌到 diff UI。仓库里也提供了 `pnpm run validate:diff-hunk-update-diff-flow` 来覆盖这条模式。
+- 更完整的 Git 绑定方式见 [Diff 接入指南](docs/diff-integration.zh-CN.md)。
+
+视觉校验辅助命令：
+
+- `pnpm run shot:diff-ux -- background /tmp/stream-monaco-diff-reference.png pierre-reference`
+  抓取 Pierre 风格参考场景，固定视口、文件头和 `-1 / +1` 的单 hunk diff；第四个参数可额外指定 `snazzy-light` 这类 theme。
+- `pnpm run compare:diff-ux -- /tmp/stream-monaco-diff-reference.png background pierre-reference`
+  重新抓取同一场景并输出截图指标，例如 `diffPixels`、`mismatchRatio`、`exactMatch`；最后一个参数可指定同一套 theme 做对比。
+
 ### Shiki 高亮器（高级说明）
 
 如果你在页面上除了 Monaco 编辑器外还使用 Shiki 的 highlighter 单独渲染代码片段（例如静态 HTML 片段），推荐的做法是：
@@ -469,6 +523,7 @@ const highlighter = await registerMonacoThemes(allThemes, allLanguages)
 
 // 创建编辑器
 ```
+
 ### 浏览器级基准（更接近真实 Monaco）
 
 仓库内还提供了一个 Playwright 脚本 `scripts/playwright-bench.mjs`，它将在 headless Chromium 中加载 Monaco（通过 CDN）并运行高频更新，从而测量真实编辑器下的耗时与 long-task 计数。
@@ -531,12 +586,12 @@ pnpm run bench
 
 // 批量（同帧）更新，两侧同时变化时更方便
 function pushNewDiff(newOriginal: string, newModified: string) {
-  updateDiff(newOriginal, newModified, 'typescript')
+updateDiff(newOriginal, newModified, 'typescript')
 }
 
 // 仅更新其中一侧（即时增量）
 function pushModifiedChunk(chunk: string) {
-  updateModified(chunk)
+updateModified(chunk)
 }
 </script>
 
@@ -559,7 +614,8 @@ function pushModifiedChunk(chunk: string) {
   border-radius: 4px;
 }
 </style>
-```
+
+````
 
 ### 流式追加 + 语言切换（快速示例）
 
@@ -626,7 +682,7 @@ onMounted(async () => {
   <p>当内容接近底部时自动滚动（可通过 autoScroll* 选项进行控制）。</p>
   <p>若是纯末尾追加，内部会走追加快路径，避免全量替换。</p>
 </template>
-```
+````
 
 更多完整示例请见 examples/ 目录。
 
@@ -636,18 +692,17 @@ onMounted(async () => {
 - 当新内容以旧内容为前缀时，采用“仅追加”的策略，避免全量替换带来的性能损耗。
 - 其他情况下执行“最小中段替换”，在模型上计算公共前后缀，只替换中间变化段，减少编辑器刷新范围。
 - `updateOriginal` / `updateModified` 为即时增量更新，适合单侧独立流式场景。
- - 可通过 options.diffAutoScroll 关闭 Diff 编辑器 modified 侧的自动滚动；默认开启以保持与单编辑器一致的体验。
+- 可通过 options.diffAutoScroll 关闭 Diff 编辑器 modified 侧的自动滚动；默认开启以保持与单编辑器一致的体验。
 
 #### 显式流式追加（推荐）
 
 当你是标准的“持续在末尾追加”场景，建议直接使用显式追加 API，可减少 diff 计算并获得最佳实时性：
 
 ```ts
-const {
-  createDiffEditor,
-  appendOriginal,
-  appendModified,
-} = useMonaco({ themes: ['vitesse-dark', 'vitesse-light'], languages: ['typescript'] })
+const { createDiffEditor, appendOriginal, appendModified } = useMonaco({
+  themes: ['vitesse-dark', 'vitesse-light'],
+  languages: ['typescript'],
+})
 
 await createDiffEditor(container, '', '', 'typescript')
 
@@ -679,8 +734,12 @@ getDiffEditorView()?.updateOptions({ renderSideBySide: false })
 
 // 获取模型：你可以自行订阅内容变化等底层行为
 const { original, modified } = getDiffModels()
-original?.onDidChangeContent?.(() => { /* ... */ })
-modified?.onDidChangeContent?.(() => { /* ... */ })
+original?.onDidChangeContent?.(() => {
+  /* ... */
+})
+modified?.onDidChangeContent?.(() => {
+  /* ... */
+})
 ```
 
 ### API 参考
@@ -689,46 +748,56 @@ modified?.onDidChangeContent?.(() => { /* ... */ })
 
 ##### 参数
 
-| 参数                    | 类型               | 默认值                              | 描述                           |
-| ----------------------- | ------------------ | ----------------------------------- | ------------------------------ |
-| `MAX_HEIGHT`            | `number`           | `500`                               | 编辑器最大高度（像素）         |
-| `readOnly`              | `boolean`          | `true`                              | 是否为只读模式                 |
-| `themes`                | `MonacoTheme[]`    | `['vitesse-dark', 'vitesse-light']` | 主题数组，至少包含两个主题     |
-| `languages`             | `MonacoLanguage[]` | 见默认语言列表                      | 支持的编程语言数组             |
-| `theme`                 | `string`           | -                                   | 初始主题名称                   |
-| `isCleanOnBeforeCreate` | `boolean`          | `true`                              | 是否在创建前清理之前注册的资源 |
-| `onBeforeCreate`        | `function`         | -                                   | 编辑器创建前的钩子函数         |
-| `autoScrollOnUpdate`    | `boolean`          | `true`                              | 更新内容时若接近底部则自动滚动 |
-| `autoScrollInitial`     | `boolean`          | `true`                              | 是否默认启用自动滚动           |
-| `autoScrollThresholdPx` | `number`           | `32`                                | 自动滚动的像素阈值             |
-| `autoScrollThresholdLines` | `number`        | `2`                                 | 自动滚动的行数阈值             |
-| `diffAutoScroll`        | `boolean`          | `true`                              | 是否启用 Diff modified 侧自动滚动 |
-| `diffHideUnchangedRegions` | `boolean \| object` | `true`                           | 是否折叠 Diff 中未改动区块（支持传 Monaco 配置对象） |
-| `diffHunkActionsOnHover` | `boolean`         | `false`                             | 是否启用 hover hunk 的上下分区局部 Revert / Stage（需显式开启） |
-| `diffHunkHoverHideDelayMs` | `number`        | `160`                               | hover 操作浮层离开后的隐藏延迟（毫秒） |
-| `onDiffHunkAction`      | `function`         | -                                   | hunk 操作回调（返回 `false` 可阻止默认编辑） |
+| 参数                       | 类型                                                         | 默认值                              | 描述                                                            |
+| -------------------------- | ------------------------------------------------------------ | ----------------------------------- | --------------------------------------------------------------- |
+| `MAX_HEIGHT`               | `number`                                                     | `500`                               | 编辑器最大高度（像素）                                          |
+| `readOnly`                 | `boolean`                                                    | `true`                              | 是否为只读模式                                                  |
+| `themes`                   | `MonacoTheme[]`                                              | `['vitesse-dark', 'vitesse-light']` | 主题数组，至少包含两个主题                                      |
+| `languages`                | `MonacoLanguage[]`                                           | 见默认语言列表                      | 支持的编程语言数组                                              |
+| `theme`                    | `string`                                                     | -                                   | 初始主题名称                                                    |
+| `isCleanOnBeforeCreate`    | `boolean`                                                    | `true`                              | 是否在创建前清理之前注册的资源                                  |
+| `onBeforeCreate`           | `function`                                                   | -                                   | 编辑器创建前的钩子函数                                          |
+| `autoScrollOnUpdate`       | `boolean`                                                    | `true`                              | 更新内容时若接近底部则自动滚动                                  |
+| `autoScrollInitial`        | `boolean`                                                    | `true`                              | 是否默认启用自动滚动                                            |
+| `autoScrollThresholdPx`    | `number`                                                     | `32`                                | 自动滚动的像素阈值                                              |
+| `autoScrollThresholdLines` | `number`                                                     | `2`                                 | 自动滚动的行数阈值                                              |
+| `diffAutoScroll`           | `boolean`                                                    | `true`                              | 是否启用 Diff modified 侧自动滚动                               |
+| `diffHideUnchangedRegions` | `boolean \| object`                                          | `true`                              | 是否折叠 Diff 中未改动区块（支持传 Monaco 配置对象）            |
+| `diffLineStyle`            | `'background' \| 'bar'`                                      | `'background'`                      | 控制变更行是偏背景块还是偏 review 竖条风格                      |
+| `diffAppearance`           | `'auto' \| 'light' \| 'dark'`                                | `'auto'`                            | 控制 diff 外层 chrome 明暗，代码 token 仍跟随当前主题           |
+| `diffUnchangedRegionStyle` | `'line-info' \| 'line-info-basic' \| 'metadata' \| 'simple'` | `'line-info'`                       | 控制折叠未改动区块的展示方式                                    |
+| `diffHunkActionsOnHover`   | `boolean`                                                    | `false`                             | 是否启用 hover hunk 的上下分区局部 Revert / Stage（需显式开启） |
+| `diffHunkHoverHideDelayMs` | `number`                                                     | `160`                               | hover 操作浮层离开后的隐藏延迟（毫秒）                          |
+| `onDiffHunkAction`         | `function`                                                   | -                                   | hunk 操作回调（返回 `false` 可阻止默认编辑）                    |
+| `diffUpdateThrottleMs`     | `number`                                                     | `50`                                | Diff 流式更新节流时间（毫秒）                                   |
 
 ##### 返回值
 
-| 方法/属性              | 类型                                                                                                 | 描述                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `createEditor`         | `(container: HTMLElement, code: string, language: string) => Promise<MonacoEditor>`                  | 创建并挂载编辑器到指定容器                     |
-| `createDiffEditor`     | `(container: HTMLElement, original: string, modified: string, language: string) => Promise<MonacoDiffEditor>` | 创建并挂载 Diff 编辑器                          |
-| `cleanupEditor`        | `() => void`                                                                                         | 销毁编辑器并清理容器                           |
-| `updateCode`           | `(newCode: string, codeLanguage: string) => void`                                                    | 更新编辑器内容和语言（RAF 合并、增量优化）     |
-| `appendCode`           | `(appendText: string, codeLanguage?: string) => void`                                                | 在编辑器末尾追加文本                           |
-| `updateDiff`           | `(original: string, modified: string, codeLanguage?: string) => void`                                | 批量更新 Diff 内容（RAF 合并、增量优化）       |
-| `updateOriginal`       | `(newCode: string, codeLanguage?: string) => void`                                                   | 仅更新 original（即时增量）                     |
-| `updateModified`       | `(newCode: string, codeLanguage?: string) => void`                                                   | 仅更新 modified（即时增量）                     |
-| `setTheme`             | `(theme: MonacoTheme) => void`                                                                       | 切换编辑器主题                                 |
-| `setLanguage`          | `(language: MonacoLanguage) => void`                                                                 | 切换编辑器语言                                 |
-| `getCurrentTheme`      | `() => string`                                                                                       | 获取当前主题名称                               |
-| `getEditor`            | `() => typeof monaco.editor`                                                                         | 获取 Monaco 的静态 editor 对象                 |
-| `getEditorView`        | `() => MonacoEditor \| null`                                                                          | 获取当前编辑器实例                             |
-| `getDiffEditorView`    | `() => MonacoDiffEditor \| null`                                                                      | 获取当前 Diff 编辑器实例                       |
-| `getCode`              | `() => string \| { original: string, modified: string } \| null`                                     | **获取编辑器当前代码**<br>- 普通编辑器返回 `string`<br>- Diff 编辑器返回 `{ original, modified }`<br>- 无编辑器返回 `null`<br>**用途**：获取用户手动编辑后的最新代码或程序更新后的内容 |
-| `appendOriginal`       | `(appendText: string, codeLanguage?: string) => void`                                                | 在 original 末尾追加（显式流式）               |
-| `appendModified`       | `(appendText: string, codeLanguage?: string) => void`                                                | 在 modified 末尾追加（显式流式）               |
+| 方法/属性                 | 类型                                                                                                                  | 描述                                                                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createEditor`            | `(container: HTMLElement, code: string, language: string) => Promise<MonacoEditorInstance>`                           | 创建并挂载编辑器到指定容器                                                                                                                                                             |
+| `createDiffEditor`        | `(container: HTMLElement, original: string, modified: string, language: string) => Promise<MonacoDiffEditorInstance>` | 创建并挂载 Diff 编辑器                                                                                                                                                                 |
+| `cleanupEditor`           | `() => void`                                                                                                          | 销毁编辑器并清理容器                                                                                                                                                                   |
+| `updateCode`              | `(newCode: string, codeLanguage: string) => void`                                                                     | 更新编辑器内容和语言（RAF 合并、增量优化）                                                                                                                                             |
+| `appendCode`              | `(appendText: string, codeLanguage?: string) => void`                                                                 | 在编辑器末尾追加文本                                                                                                                                                                   |
+| `updateDiff`              | `(original: string, modified: string, codeLanguage?: string) => void`                                                 | 批量更新 Diff 内容（RAF 合并、增量优化）                                                                                                                                               |
+| `updateOriginal`          | `(newCode: string, codeLanguage?: string) => void`                                                                    | 仅更新 original（即时增量）                                                                                                                                                            |
+| `updateModified`          | `(newCode: string, codeLanguage?: string) => void`                                                                    | 仅更新 modified（即时增量）                                                                                                                                                            |
+| `setDiffModels`           | `(models: DiffModelPair, options?: DiffModelTransitionOptions) => Promise<void>`                                      | 原地切换整对 Diff models；当新旧内容相同，会先预热 Monaco 的 diff view model，再走保留视图状态的低抖动切换                                                                             |
+| `setTheme`                | `(theme: MonacoTheme, force?: boolean) => Promise<void>`                                                              | 切换编辑器主题；`force=true` 时即使当前主题相同也会强制重应用                                                                                                                          |
+| `refreshDiffPresentation` | `() => void`                                                                                                          | 在不 remount 的情况下，重算 diff chrome / unchanged overlay 的表现层                                                                                                                   |
+| `setLanguage`             | `(language: MonacoLanguage) => void`                                                                                  | 切换编辑器语言                                                                                                                                                                         |
+| `getCurrentTheme`         | `() => string`                                                                                                        | 获取当前主题名称                                                                                                                                                                       |
+| `getEditor`               | `() => typeof monaco.editor`                                                                                          | 获取 Monaco 的静态 editor 对象                                                                                                                                                         |
+| `getEditorView`           | `() => MonacoEditorInstance \| null`                                                                                  | 获取当前编辑器实例                                                                                                                                                                     |
+| `getDiffEditorView`       | `() => MonacoDiffEditorInstance \| null`                                                                              | 获取当前 Diff 编辑器实例                                                                                                                                                               |
+| `getDiffModels`           | `() => DiffModels`                                                                                                    | 获取 Diff 两侧模型                                                                                                                                                                     |
+| `getMonacoInstance`       | `() => typeof monaco`                                                                                                 | 获取 Monaco 模块实例                                                                                                                                                                   |
+| `setUpdateThrottleMs`     | `(ms: number) => void`                                                                                                | 动态调整 `updateCode` 的时间节流                                                                                                                                                       |
+| `getUpdateThrottleMs`     | `() => number`                                                                                                        | 获取当前 `updateCode` 节流值                                                                                                                                                           |
+| `getCode`                 | `() => MonacoCodeValue`                                                                                               | **获取编辑器当前代码**<br>- 普通编辑器返回 `string`<br>- Diff 编辑器返回 `{ original, modified }`<br>- 无编辑器返回 `null`<br>**用途**：获取用户手动编辑后的最新代码或程序更新后的内容 |
+| `appendOriginal`          | `(appendText: string, codeLanguage?: string) => void`                                                                 | 在 original 末尾追加（显式流式）                                                                                                                                                       |
+| `appendModified`          | `(appendText: string, codeLanguage?: string) => void`                                                                 | 在 modified 末尾追加（显式流式）                                                                                                                                                       |
 
 #### 支持的主题
 
