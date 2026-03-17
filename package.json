@@ -73,7 +73,7 @@
     "format": "prettier --write --cache .",
     "lint": "eslint . --cache",
     "lint:fix": "pnpm run lint --fix",
-    "prepublishOnly": "nr build",
+    "prepublishOnly": "pnpm build",
     "release": "bumpp && npm publish",
     "start": "esno src/index.ts",
     "bench": "node scripts/stream-benchmark.mjs",
