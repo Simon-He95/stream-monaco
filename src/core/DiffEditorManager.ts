@@ -803,9 +803,6 @@ export class DiffEditorManager {
         lineNumberClassName: removed
           ? 'stream-monaco-fallback-line-number-delete'
           : 'stream-monaco-fallback-line-number-insert',
-        description: removed
-          ? 'stream-monaco-fallback-line-delete'
-          : 'stream-monaco-fallback-line-insert',
         zIndex: 5,
       },
     }
