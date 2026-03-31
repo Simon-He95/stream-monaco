@@ -67,6 +67,8 @@ const diffState = ref<'ready' | 'null'>('null')
 const collapsed = ref(true)
 const addedLines = ref(0)
 const removedLines = ref(0)
+const streamPlaybackActive = ref(false)
+const streamPaused = ref(false)
 const fileName = ref('packages/runtime/src/synchronizeTasks.ts')
 const fileCaption = ref('Pierre-inspired diff chrome on top of Monaco + Shiki')
 let pair: DiffPair | null = null
@@ -74,6 +76,8 @@ let scenarioVersion = 0
 let diffHunkActionMode: DiffHunkActionMode = 'default'
 let diffUpdatedDisposable: { dispose: () => void } | null = null
 let diffPollTimer: number | null = null
+let diffStreamTimer: number | null = null
+let diffStreamTicket = 0
 let injectedDiffModels: DiffTestModelPair | null = null
 
 type LineChangeLike = {
@@ -89,6 +93,8 @@ type DiffAppearance = NonNullable<MonacoOptions['diffAppearance']>
 type DiffUnchangedRegionStyle = NonNullable<
   MonacoOptions['diffUnchangedRegionStyle']
 >
+type DiffColumnCount = 1 | 2
+type StreamSpeed = 'slow' | 'normal' | 'fast'
 type DiffTheme =
   | 'vitesse-light'
   | 'vitesse-dark'
@@ -100,6 +106,33 @@ type DiffTheme =
   | 'catppuccin-mocha'
   | 'github-dark'
 type ReferenceLineCount = 6 | 48 | 512 | 4096
+type DiffViewportState = {
+  originalTop: number
+  originalLeft: number
+  modifiedTop: number
+  modifiedLeft: number
+}
+
+const streamSpeedOptions = {
+  slow: {
+    label: 'Slow',
+    delayMs: 20,
+  },
+  normal: {
+    label: 'Normal',
+    delayMs: 10,
+  },
+  fast: {
+    label: 'Fast',
+    delayMs: 4,
+  },
+} as const satisfies Record<
+  StreamSpeed,
+  {
+    label: string
+    delayMs: number
+  }
+>
 
 const lightDiffThemes = [
   'snazzy-light',
@@ -199,6 +232,32 @@ function parseDiffAppearance(
   return value === 'auto' ? 'auto' : fallback
 }
 
+function parseDiffColumnCount(
+  value: string | null | undefined,
+  fallback: DiffColumnCount,
+): DiffColumnCount {
+  if (value === '1') return 1
+  if (value === '2') return 2
+  return fallback
+}
+
+function parseBooleanFlag(
+  value: string | null | undefined,
+  fallback: boolean,
+) {
+  if (value === '1' || value === 'true' || value === 'on') return true
+  if (value === '0' || value === 'false' || value === 'off') return false
+  return fallback
+}
+
+function parseStreamSpeed(
+  value: string | null | undefined,
+  fallback: StreamSpeed,
+): StreamSpeed {
+  if (value === 'slow' || value === 'normal' || value === 'fast') return value
+  return fallback
+}
+
 function parseReferenceLineCount(
   value: string | null | undefined,
   fallback: ReferenceLineCount,
@@ -290,6 +349,30 @@ const initialReferenceLineCount =
       )
     : 6
 const referenceLineCount = ref<ReferenceLineCount>(initialReferenceLineCount)
+const initialDiffColumnCount =
+  typeof window !== 'undefined'
+    ? parseDiffColumnCount(
+        new URLSearchParams(window.location.search).get('columns'),
+        2,
+      )
+    : 2
+const diffColumnCount = ref<DiffColumnCount>(initialDiffColumnCount)
+const initialStreamOutput =
+  typeof window !== 'undefined'
+    ? parseBooleanFlag(
+        new URLSearchParams(window.location.search).get('streamOutput'),
+        false,
+      )
+    : false
+const streamOutput = ref(initialStreamOutput)
+const initialStreamSpeed =
+  typeof window !== 'undefined'
+    ? parseStreamSpeed(
+        new URLSearchParams(window.location.search).get('streamSpeed'),
+        'normal',
+      )
+    : 'normal'
+const streamSpeed = ref<StreamSpeed>(initialStreamSpeed)
 
 function normalizeThemeSelection() {
   if (diffAppearance.value === 'dark' && !isDarkDiffTheme(diffTheme.value)) {
@@ -854,6 +937,9 @@ function applyScenarioPresentation() {
   monacoOptions.theme = diffTheme.value
   monacoOptions.diffLineStyle = diffLineStyle.value
   monacoOptions.diffAppearance = effectiveDiffAppearance.value
+  monacoOptions.renderSideBySide = diffColumnCount.value === 2
+  monacoOptions.useInlineViewWhenSpaceIsLimited = false
+  monacoOptions.diffAutoScroll = true
   monacoOptions.diffHideUnchangedRegions = isLineInfoScenario.value
     ? lineInfoCollapsedOption
     : collapsedOption
@@ -925,6 +1011,9 @@ const monacoOptions: MonacoOptions = {
   diffAlgorithm: 'legacy',
   renderIndicators: true,
   ignoreTrimWhitespace: false,
+  renderSideBySide: initialDiffColumnCount === 2,
+  useInlineViewWhenSpaceIsLimited: false,
+  diffAutoScroll: true,
   diffHideUnchangedRegions: collapsedOption,
   diffHunkActionsOnHover: true,
   diffLineStyle: diffLineStyle.value,
@@ -1046,6 +1135,187 @@ function readActiveDiffValues(): DiffPair {
     original: original?.getValue() ?? '',
     modified: modified?.getValue() ?? '',
   }
+}
+
+function stopDiffStreamPlayback() {
+  diffStreamTicket += 1
+  streamPlaybackActive.value = false
+  streamPaused.value = false
+  if (diffStreamTimer != null) {
+    clearTimeout(diffStreamTimer)
+    diffStreamTimer = null
+  }
+}
+
+function waitForDiffStreamTick(ticket: number, delayMs: number) {
+  return new Promise<boolean>((resolve) => {
+    if (ticket !== diffStreamTicket) {
+      resolve(false)
+      return
+    }
+    diffStreamTimer = window.setTimeout(() => {
+      diffStreamTimer = null
+      resolve(ticket === diffStreamTicket)
+    }, delayMs)
+  })
+}
+
+function getStreamSpeedConfig() {
+  return streamSpeedOptions[streamSpeed.value]
+}
+
+function getRandomStreamChunkSize() {
+  return Math.floor(Math.random() * 10) + 1
+}
+
+async function waitForStreamPlaybackAdvance(ticket: number) {
+  while (ticket === diffStreamTicket) {
+    if (streamPaused.value) {
+      const stillPaused = await waitForDiffStreamTick(ticket, 80)
+      if (!stillPaused) return false
+      continue
+    }
+
+    const delayed = await waitForDiffStreamTick(ticket, getStreamSpeedConfig().delayMs)
+    if (!delayed) return false
+    if (!streamPaused.value) return true
+  }
+  return false
+}
+
+function createStreamPreviewPair(targetPair: DiffPair): DiffPair {
+  const maxLength = Math.max(
+    targetPair.original.length,
+    targetPair.modified.length,
+  )
+  if (maxLength <= 1) return targetPair
+  const seedLength = Math.min(maxLength, getRandomStreamChunkSize())
+  return {
+    original: targetPair.original.slice(0, seedLength),
+    modified: targetPair.modified.slice(0, seedLength),
+  }
+}
+
+function readDiffViewportState(): DiffViewportState | null {
+  const view = getDiffEditorView()
+  if (!view) return null
+  const original = view.getOriginalEditor()
+  const modified = view.getModifiedEditor()
+  return {
+    originalTop: original.getScrollTop(),
+    originalLeft: original.getScrollLeft(),
+    modifiedTop: modified.getScrollTop(),
+    modifiedLeft: modified.getScrollLeft(),
+  }
+}
+
+function restoreDiffViewport(state: DiffViewportState | null) {
+  if (!state) return
+  const view = getDiffEditorView()
+  if (!view) return
+  const original = view.getOriginalEditor()
+  const modified = view.getModifiedEditor()
+  original.setScrollTop(state.originalTop)
+  original.setScrollLeft(state.originalLeft)
+  modified.setScrollTop(state.modifiedTop)
+  modified.setScrollLeft(state.modifiedLeft)
+}
+
+function scrollDiffViewportToBottom() {
+  const view = getDiffEditorView()
+  if (!view) return
+  const original = view.getOriginalEditor()
+  const modified = view.getModifiedEditor()
+  original.setScrollTop(original.getScrollHeight())
+  modified.setScrollTop(modified.getScrollHeight())
+}
+
+async function playStreamedDiff(targetPair: DiffPair, language: MonacoLanguage) {
+  stopDiffStreamPlayback()
+  const ticket = diffStreamTicket
+  const maxLength = Math.max(
+    targetPair.original.length,
+    targetPair.modified.length,
+  )
+  if (maxLength <= 1) {
+    updateDiff(targetPair.original, targetPair.modified, language)
+    applyCurrentFoldState()
+    syncDiffCount()
+    startPollDiffCount()
+    return
+  }
+
+  streamPlaybackActive.value = true
+  let length = Math.max(
+    readActiveDiffValues().original.length,
+    readActiveDiffValues().modified.length,
+  )
+
+  while (length < maxLength) {
+    if (ticket !== diffStreamTicket) return
+    length = Math.min(maxLength, length + getRandomStreamChunkSize())
+    updateDiff(
+      targetPair.original.slice(0, length),
+      targetPair.modified.slice(0, length),
+      language,
+    )
+    syncDiffCount()
+    const shouldContinue = await waitForStreamPlaybackAdvance(ticket)
+    if (!shouldContinue) return
+  }
+
+  if (ticket !== diffStreamTicket) return
+  updateDiff(targetPair.original, targetPair.modified, language)
+  syncDiffCount()
+  const viewState = readDiffViewportState()
+  const shouldSettle = await waitForDiffStreamTick(ticket, 180)
+  if (!shouldSettle) return
+  streamPlaybackActive.value = false
+  await remountDiffEditor({
+    streamPreview: false,
+    viewportMode: 'preserve',
+    viewportState: viewState,
+  })
+}
+
+function applyCurrentFoldState(forceCollapse = false) {
+  if (forceCollapse || collapsed.value) collapseUnchanged()
+  else expandUnchanged()
+}
+
+function showExpandedDuringStream() {
+  monacoOptions.diffHideUnchangedRegions = { enabled: false }
+  getDiffEditorView()?.updateOptions({
+    hideUnchangedRegions: { enabled: false },
+  })
+}
+
+function renderScenarioPair(
+  targetPair: DiffPair,
+  language: MonacoLanguage,
+  options: { forceCollapse?: boolean } = {},
+) {
+  stopDiffStreamPlayback()
+  const nextPair = streamOutput.value
+    ? createStreamPreviewPair(targetPair)
+    : targetPair
+  updateDiff(nextPair.original, nextPair.modified, language)
+  if (streamOutput.value) {
+    if (options.forceCollapse) collapsed.value = true
+    showExpandedDuringStream()
+  }
+  else {
+    applyCurrentFoldState(options.forceCollapse)
+  }
+  if (streamOutput.value) scrollDiffViewportToBottom()
+  else resetDiffViewport()
+  window.setTimeout(() => {
+    if (streamOutput.value) scrollDiffViewportToBottom()
+    else resetDiffViewport()
+  }, 32)
+  setTimeout(() => syncDiffCount(), 30)
+  startPollDiffCount()
+  if (streamOutput.value) void playStreamedDiff(targetPair, language)
 }
 
 function bindDiffUpdateEvent() {
@@ -1178,29 +1448,49 @@ function syncDemoStateToUrl() {
   url.searchParams.set('theme', diffTheme.value)
   url.searchParams.set('lines', String(referenceLineCount.value))
   url.searchParams.set('unchangedStyle', diffUnchangedRegionStyle.value)
+  url.searchParams.set('columns', String(diffColumnCount.value))
+  url.searchParams.set('streamOutput', streamOutput.value ? '1' : '0')
+  url.searchParams.set('streamSpeed', streamSpeed.value)
   window.history.replaceState({}, '', url)
 }
 
-async function remountDiffEditor() {
+async function remountDiffEditor(
+  options: {
+    streamPreview?: boolean
+    viewportMode?: 'top' | 'bottom' | 'preserve'
+    viewportState?: DiffViewportState | null
+  } = {},
+) {
   if (!el.value) return
   if (!pair) pair = createActiveScenario(scenarioVersion)
-  applyScenarioMeta()
+  const meta = applyScenarioMeta()
   applyScenarioPresentation()
   await setTheme(diffTheme.value)
+  stopDiffStreamPlayback()
   cleanupEditor()
+  const streamPreview = options.streamPreview ?? streamOutput.value
+  const initialPair = streamPreview ? createStreamPreviewPair(pair) : pair
   await createDiffEditor(
     el.value,
-    pair.original,
-    pair.modified,
-    currentScenarioMeta().language,
+    initialPair.original,
+    initialPair.modified,
+    meta.language,
   )
-  if (collapsed.value) collapseUnchanged()
-  else expandUnchanged()
+  if (streamPreview) showExpandedDuringStream()
+  else applyCurrentFoldState()
   bindDiffUpdateEvent()
-  resetDiffViewport()
-  window.setTimeout(() => resetDiffViewport(), 32)
+  const viewportMode = options.viewportMode ?? (streamPreview ? 'bottom' : 'top')
+  if (viewportMode === 'preserve') restoreDiffViewport(options.viewportState ?? null)
+  else if (viewportMode === 'bottom') scrollDiffViewportToBottom()
+  else resetDiffViewport()
+  window.setTimeout(() => {
+    if (viewportMode === 'preserve') restoreDiffViewport(options.viewportState ?? null)
+    else if (viewportMode === 'bottom') scrollDiffViewportToBottom()
+    else resetDiffViewport()
+  }, 32)
   syncDiffCount()
   startPollDiffCount()
+  if (streamPreview) void playStreamedDiff(pair, meta.language)
 }
 
 function refreshActiveDiffPresentation() {
@@ -1236,6 +1526,13 @@ async function setDiffAppearance(next: DiffAppearance) {
   refreshDiffPresentation()
 }
 
+async function setDiffColumnCount(next: DiffColumnCount) {
+  if (diffColumnCount.value === next) return
+  diffColumnCount.value = next
+  syncDemoStateToUrl()
+  await remountDiffEditor()
+}
+
 async function setDiffScenario(next: DiffScenario) {
   if (diffScenario.value === next) return
   diffScenario.value = next
@@ -1247,6 +1544,24 @@ async function setDiffScenario(next: DiffScenario) {
   patchFlowLogs.value = []
   syncDemoStateToUrl()
   await remountDiffEditor()
+}
+
+async function setStreamOutput(next: boolean) {
+  if (streamOutput.value === next) return
+  streamOutput.value = next
+  syncDemoStateToUrl()
+  await remountDiffEditor()
+}
+
+function setStreamSpeed(next: StreamSpeed) {
+  if (streamSpeed.value === next) return
+  streamSpeed.value = next
+  syncDemoStateToUrl()
+}
+
+function toggleStreamPaused() {
+  if (!streamPlaybackActive.value) return
+  streamPaused.value = !streamPaused.value
 }
 
 async function setDiffUnchangedRegionStyle(next: DiffUnchangedRegionStyle) {
@@ -1266,6 +1581,10 @@ async function setReferenceLineCount(next: ReferenceLineCount) {
 }
 
 function collapseUnchanged() {
+  if (streamPlaybackActive.value) {
+    collapsed.value = true
+    return
+  }
   monacoOptions.diffHideUnchangedRegions = isLineInfoScenario.value
     ? lineInfoCollapsedOption
     : collapsedOption
@@ -1278,6 +1597,10 @@ function collapseUnchanged() {
 }
 
 function expandUnchanged() {
+  if (streamPlaybackActive.value) {
+    collapsed.value = false
+    return
+  }
   monacoOptions.diffHideUnchangedRegions = { enabled: false }
   getDiffEditorView()?.updateOptions({
     hideUnchangedRegions: { enabled: false },
@@ -1292,12 +1615,7 @@ function resetScenario() {
   actionLogs.value = []
   patchFlowLogs.value = []
   applyScenarioPresentation()
-  updateDiff(pair.original, pair.modified, meta.language)
-  collapseUnchanged()
-  resetDiffViewport()
-  window.setTimeout(() => resetDiffViewport(), 32)
-  setTimeout(() => syncDiffCount(), 30)
-  startPollDiffCount()
+  renderScenarioPair(pair, meta.language, { forceCollapse: true })
 }
 
 function applyScenarioPatch() {
@@ -1305,12 +1623,8 @@ function applyScenarioPatch() {
   pair = createActiveScenario(scenarioVersion)
   const meta = applyScenarioMeta()
   applyScenarioPresentation()
-  updateDiff(pair.original, pair.modified, meta.language)
+  renderScenarioPair(pair, meta.language)
   pushActionLog(`PATCH v${(scenarioVersion % 3) + 1} | keep current fold state`)
-  resetDiffViewport()
-  window.setTimeout(() => resetDiffViewport(), 32)
-  setTimeout(() => syncDiffCount(), 30)
-  startPollDiffCount()
 }
 
 onMounted(async () => {
@@ -1330,6 +1644,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   diffUpdatedDisposable?.dispose()
   diffUpdatedDisposable = null
+  stopDiffStreamPlayback()
   if (diffPollTimer != null) {
     clearInterval(diffPollTimer)
     diffPollTimer = null
@@ -1441,8 +1756,29 @@ onBeforeUnmount(() => {
                 diffState === 'ready' ? 'Native diff ready' : 'Fallback summary'
               }}
             </span>
-            <span class="badge" :class="{ on: collapsed }">
-              {{ collapsed ? 'Collapsed' : 'Expanded' }}
+            <span class="badge" :class="{ on: collapsed && !streamPlaybackActive }">
+              {{
+                streamPlaybackActive
+                  ? 'Expanded for stream'
+                  : collapsed
+                    ? 'Collapsed'
+                    : 'Expanded'
+              }}
+            </span>
+            <span class="badge">Layout: {{ diffColumnCount }} col</span>
+            <span class="badge" :class="{ on: streamOutput || streamPlaybackActive }">
+              {{
+                streamPlaybackActive
+                  ? streamPaused
+                    ? 'Paused'
+                    : 'Streaming...'
+                  : streamOutput
+                    ? 'Streaming on'
+                    : 'Static output'
+              }}
+            </span>
+            <span v-if="streamOutput" class="badge">
+              Speed: {{ streamSpeedOptions[streamSpeed].label }}
             </span>
             <span class="badge">{{ diffCount }} hunks</span>
             <span class="badge">Style: {{ diffLineStyle }}</span>
@@ -1472,6 +1808,58 @@ onBeforeUnmount(() => {
                 @click="setDiffScenario('line-info-reference')"
               >
                 Line Info
+              </button>
+            </div>
+            <div class="segmented" aria-label="Diff column count">
+              <button
+                :class="{ active: diffColumnCount === 2 }"
+                @click="setDiffColumnCount(2)"
+              >
+                2 Col
+              </button>
+              <button
+                :class="{ active: diffColumnCount === 1 }"
+                @click="setDiffColumnCount(1)"
+              >
+                1 Col
+              </button>
+            </div>
+            <div class="segmented" aria-label="Diff output mode">
+              <button
+                :class="{ active: !streamOutput }"
+                @click="setStreamOutput(false)"
+              >
+                Static
+              </button>
+              <button
+                :class="{ active: streamOutput }"
+                @click="setStreamOutput(true)"
+              >
+                Stream
+              </button>
+            </div>
+            <div
+              v-if="streamOutput"
+              class="segmented"
+              aria-label="Stream speed"
+            >
+              <button
+                :class="{ active: streamSpeed === 'slow' }"
+                @click="setStreamSpeed('slow')"
+              >
+                Slow
+              </button>
+              <button
+                :class="{ active: streamSpeed === 'normal' }"
+                @click="setStreamSpeed('normal')"
+              >
+                Normal
+              </button>
+              <button
+                :class="{ active: streamSpeed === 'fast' }"
+                @click="setStreamSpeed('fast')"
+              >
+                Fast
               </button>
             </div>
             <div class="segmented" aria-label="Diff line style">
@@ -1580,6 +1968,14 @@ onBeforeUnmount(() => {
                 4096
               </button>
             </div>
+            <button
+              v-if="streamOutput"
+              :class="{ active: streamPaused }"
+              :disabled="!streamPlaybackActive"
+              @click="toggleStreamPaused"
+            >
+              {{ streamPaused ? 'Resume' : 'Pause' }}
+            </button>
             <button :class="{ active: collapsed }" @click="collapseUnchanged">
               Collapse
             </button>
