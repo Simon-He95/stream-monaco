@@ -457,6 +457,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
       autoScrollThresholdPx,
       autoScrollThresholdLines,
       monacoOptions.revealDebounceMs,
+      updateThrottleMs,
     )
     editorView = await editorMgr.createEditor(
       container,
@@ -904,10 +905,11 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
   // Runtime control: allow changing throttle at runtime
   function setUpdateThrottleMs(ms: number) {
     updateThrottleMs = ms
+    editorMgr?.setUpdateThrottleMs(ms)
   }
 
   function getUpdateThrottleMs() {
-    return updateThrottleMs
+    return editorMgr?.getUpdateThrottleMs() ?? updateThrottleMs
   }
 
   // Diff RAF 更新由 DiffEditorManager 负责

@@ -14,6 +14,9 @@ export class EditorManager {
   private lastKnownCode: string | null = null
   private pendingUpdate: { code: string, lang: string } | null = null
   private _hasScrollBar = false
+  private updateThrottleMs = 50
+  private lastUpdateFlushTime = 0
+  private updateThrottleTimer: number | null = null
 
   private shouldAutoScroll = true
   private scrollWatcher: any = null
@@ -70,7 +73,13 @@ export class EditorManager {
     private autoScrollThresholdPx: number,
     private autoScrollThresholdLines: number,
     private revealDebounceMsOption?: number,
-  ) { }
+    private updateThrottleMsOption?: number,
+  ) {
+    this.updateThrottleMs
+      = this.updateThrottleMsOption
+        ?? (this.options as any).updateThrottleMs
+        ?? 50
+  }
 
   // initialize debug flag: prefer explicit runtime flag, then options, fallback to false
   private initDebugFlag() {
@@ -519,7 +528,25 @@ export class EditorManager {
 
   updateCode(newCode: string, codeLanguage: string) {
     this.pendingUpdate = { code: newCode, lang: codeLanguage }
-    this.rafScheduler.schedule('update', () => this.flushPendingUpdate())
+    this.rafScheduler.schedule('update', () => {
+      if (!this.updateThrottleMs) {
+        this.flushPendingUpdate()
+        return
+      }
+      const now = Date.now()
+      const since = now - this.lastUpdateFlushTime
+      if (since >= this.updateThrottleMs) {
+        this.flushPendingUpdate()
+        return
+      }
+      if (this.updateThrottleTimer != null)
+        return
+      const wait = this.updateThrottleMs - since
+      this.updateThrottleTimer = (setTimeout(() => {
+        this.updateThrottleTimer = null
+        this.rafScheduler.schedule('update', () => this.flushPendingUpdate())
+      }, wait) as unknown) as number
+    })
   }
 
   private flushPendingUpdate() {
@@ -531,6 +558,7 @@ export class EditorManager {
 
     const { code: newCode, lang: codeLanguage } = this.pendingUpdate
     this.pendingUpdate = null
+    this.lastUpdateFlushTime = Date.now()
     const processedCodeLanguage = processedLanguage(codeLanguage)
     const languageId = model.getLanguageId()
 
@@ -733,6 +761,19 @@ export class EditorManager {
     return this.editorView
   }
 
+  setUpdateThrottleMs(ms: number) {
+    this.updateThrottleMs = ms
+    if (!this.updateThrottleMs && this.updateThrottleTimer != null) {
+      clearTimeout(this.updateThrottleTimer)
+      this.updateThrottleTimer = null
+      this.rafScheduler.schedule('update', () => this.flushPendingUpdate())
+    }
+  }
+
+  getUpdateThrottleMs() {
+    return this.updateThrottleMs
+  }
+
   cleanup() {
     this.rafScheduler.cancel('update')
     this.rafScheduler.cancel('sync-last-known')
@@ -758,6 +799,10 @@ export class EditorManager {
     if (this.scrollWatcherSuppressionTimer != null) {
       clearTimeout(this.scrollWatcherSuppressionTimer)
       this.scrollWatcherSuppressionTimer = null
+    }
+    if (this.updateThrottleTimer != null) {
+      clearTimeout(this.updateThrottleTimer)
+      this.updateThrottleTimer = null
     }
 
     if (this.editorView) {
