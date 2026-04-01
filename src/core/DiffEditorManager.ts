@@ -4706,7 +4706,6 @@ export class DiffEditorManager {
         lastRevealLineDiff: this.lastRevealLineDiff,
       })
       try {
-        this.shouldAutoScrollDiff = true
         this.lastScrollTopDiff
           = this.diffEditorView?.getModifiedEditor().getScrollTop?.()
             ?? this.lastScrollTopDiff
@@ -4732,13 +4731,6 @@ export class DiffEditorManager {
     else me.revealLine(line)
     this.measureViewportDiff()
     log('diff', 'performImmediateRevealDiff', { line, ticket })
-    try {
-      this.shouldAutoScrollDiff = true
-      this.lastScrollTopDiff
-        = this.diffEditorView?.getModifiedEditor().getScrollTop?.()
-          ?? this.lastScrollTopDiff
-    }
-    catch {}
   }
 
   private scheduleImmediateRevealAfterLayoutDiff(line: number) {
@@ -5747,12 +5739,12 @@ export class DiffEditorManager {
       // before we check for vertical scrollbar and potentially auto-scroll.
       this.maybeScrollDiffToBottom(newLine, prevLine)
     }
-    // restore suppression state and ensure auto-scroll remains enabled
+    // restore suppression state and sync the watcher position after the
+    // programmatic edits so subsequent user scroll deltas stay accurate.
     if (suppressedByFlush) {
       watcherApi.setSuppressed(false)
     }
     try {
-      this.shouldAutoScrollDiff = true
       this.lastScrollTopDiff
         = this.diffEditorView?.getModifiedEditor().getScrollTop?.()
           ?? this.lastScrollTopDiff

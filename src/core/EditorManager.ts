@@ -28,6 +28,7 @@ export class EditorManager {
   private cachedComputedHeight: number | null = null
   private cachedLineCount: number | null = null
   private lastKnownCodeDirty = false
+  private programmaticContentChangeDepth = 0
   private debug = false
 
   // read a small set of viewport/layout metrics once to avoid repeated DOM reads
@@ -101,6 +102,16 @@ export class EditorManager {
     if (!this.debug)
       return
     log('EditorManager', ...args)
+  }
+
+  private runAsProgrammaticContentChange<T>(fn: () => T): T {
+    this.programmaticContentChangeDepth += 1
+    try {
+      return fn()
+    }
+    finally {
+      this.programmaticContentChangeDepth -= 1
+    }
   }
 
   private hasVerticalScrollbar(): boolean {
@@ -417,6 +428,8 @@ export class EditorManager {
     // Avoid calling getValue() synchronously on every content change; instead
     // mark dirty and sync once per RAF frame to reduce CPU and style recalcs.
     this.editorView.onDidChangeModelContent(() => {
+      if (this.programmaticContentChangeDepth > 0)
+        return
       this.lastKnownCodeDirty = true
       this.rafScheduler.schedule('sync-last-known', () => this.syncLastKnownCode())
     })
@@ -566,7 +579,9 @@ export class EditorManager {
       if (processedCodeLanguage)
         monaco.editor.setModelLanguage(model, processedCodeLanguage)
       const prevLineCount = model.getLineCount()
-      model.setValue(newCode)
+      this.runAsProgrammaticContentChange(() => {
+        model.setValue(newCode)
+      })
       this.lastKnownCode = newCode
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
@@ -662,7 +677,9 @@ export class EditorManager {
     const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
     if (prev.length + next.length > maxChars || changeRatio > ratio) {
       const prevLineCount = model.getLineCount()
-      model.setValue(next)
+      this.runAsProgrammaticContentChange(() => {
+        model.setValue(next)
+      })
       this.lastKnownCode = next
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
@@ -687,9 +704,11 @@ export class EditorManager {
 
     const isReadOnly = this.editorView.getOption(monaco.editor.EditorOption.readOnly)
     const edit = [{ range, text: replaceText, forceMoveMarkers: true }]
-    if (isReadOnly)
-      model.applyEdits(edit)
-    else this.editorView.executeEdits('minimal-replace', edit)
+    this.runAsProgrammaticContentChange(() => {
+      if (isReadOnly)
+        model.applyEdits(edit)
+      else this.editorView!.executeEdits('minimal-replace', edit)
+    })
   }
 
   private flushAppendBuffer() {
@@ -709,17 +728,18 @@ export class EditorManager {
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
     const isReadOnly = this.editorView.getOption(monaco.editor.EditorOption.readOnly)
-    if (isReadOnly) {
-      model.applyEdits([{ range, text, forceMoveMarkers: true }])
-    }
-    else {
-      this.editorView.executeEdits('append', [{ range, text, forceMoveMarkers: true }])
-    }
-    // Keep lastKnownCode in sync with the model after applying buffered appends
-    try {
+    this.runAsProgrammaticContentChange(() => {
+      if (isReadOnly) {
+        model.applyEdits([{ range, text, forceMoveMarkers: true }])
+      }
+      else {
+        this.editorView!.executeEdits('append', [{ range, text, forceMoveMarkers: true }])
+      }
+    })
+    if (this.lastKnownCode != null)
+      this.lastKnownCode = this.lastKnownCode + text
+    else
       this.lastKnownCode = model.getValue()
-    }
-    catch { }
     const newLineCount = model.getLineCount()
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount

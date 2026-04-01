@@ -21,6 +21,8 @@ async function loadUseMonaco() {
   })
 
   vi.doMock('../src/monaco-shim', () => {
+    let lastCreatedModel: any = null
+
     class Range {
       constructor(
         public startLineNumber: number,
@@ -33,6 +35,7 @@ async function loadUseMonaco() {
     function createModel(initialValue: string, initialLanguage: string) {
       let value = initialValue
       let languageId = initialLanguage
+      let getValueCallCount = 0
       const contentSizeListeners = new Set<() => void>()
       const contentChangeListeners = new Set<() => void>()
 
@@ -55,6 +58,7 @@ async function loadUseMonaco() {
 
       return {
         getValue() {
+          getValueCallCount += 1
           return value
         },
         setValue(next: string) {
@@ -110,6 +114,9 @@ async function loadUseMonaco() {
             },
           }
         },
+        __getGetValueCallCount() {
+          return getValueCallCount
+        },
       }
     }
 
@@ -120,6 +127,7 @@ async function loadUseMonaco() {
       },
       create: vi.fn((_: any, options: any) => {
         const model = createModel(options.value ?? '', options.language ?? 'plaintext')
+        lastCreatedModel = model
         const scrollListeners = new Set<(e: any) => void>()
         const domNode = {
           addEventListener() {},
@@ -191,10 +199,18 @@ async function loadUseMonaco() {
       editor,
       languages,
       Range,
+      __getLastModel() {
+        return lastCreatedModel
+      },
     }
   })
 
-  return await import('../src/index.base')
+  const base = await import('../src/index.base')
+  const monacoModule: any = await import('../src/monaco-shim')
+  return {
+    ...base,
+    __getLastModel: monacoModule.__getLastModel,
+  }
 }
 
 describe('EditorManager update throttling', () => {
@@ -261,5 +277,53 @@ describe('EditorManager update throttling', () => {
 
     await vi.runAllTimersAsync()
     expect(monaco.getCode()).toBe('ab')
+  })
+
+  it('avoids rereading the whole model during programmatic streaming appends', async () => {
+    const { useMonaco, __getLastModel } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['javascript'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'javascript')
+    await vi.runAllTimersAsync()
+
+    const model = __getLastModel()
+    const beforeFirstUpdate = model.__getGetValueCallCount()
+    monaco.updateCode('a', 'javascript')
+    await vi.runAllTimersAsync()
+    expect(model.__getGetValueCallCount() - beforeFirstUpdate).toBe(0)
+
+    const beforeSecondUpdate = model.__getGetValueCallCount()
+    monaco.updateCode('ab', 'javascript')
+    await vi.runAllTimersAsync()
+    expect(model.__getGetValueCallCount() - beforeSecondUpdate).toBe(0)
+    expect(monaco.getCode()).toBe('ab')
+  })
+
+  it('still syncs externally edited content before the next streamed update', async () => {
+    const { useMonaco, __getLastModel } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['javascript'],
+      readOnly: false,
+      updateThrottleMs: 0,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'javascript')
+    await vi.runAllTimersAsync()
+
+    const model = __getLastModel()
+    model.setValue('hello')
+    await vi.runAllTimersAsync()
+
+    monaco.updateCode('hello world', 'javascript')
+    await vi.runAllTimersAsync()
+    expect(monaco.getCode()).toBe('hello world')
   })
 })
