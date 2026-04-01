@@ -1,6 +1,7 @@
 export function createMockWrapper(opts: { updateThrottleMs?: number } = {}) {
   const appendBuffer: string[] = []
   let appendBufferScheduled = false
+  let appendImmediate: ReturnType<typeof setImmediate> | null = null
   let pendingUpdate: { code: string } | null = null
   let lastKnownCode = ''
   let throttleMs = opts.updateThrottleMs ?? 50
@@ -15,14 +16,43 @@ export function createMockWrapper(opts: { updateThrottleMs?: number } = {}) {
     getLanguageId() { return 'javascript' },
   }
 
+  function clearBufferedAppends() {
+    appendBuffer.length = 0
+    appendBufferScheduled = false
+    if (appendImmediate != null) {
+      clearImmediate(appendImmediate)
+      appendImmediate = null
+    }
+  }
+
+  function scheduleAppendFlush() {
+    appendBufferScheduled = true
+    appendImmediate = setImmediate(() => {
+      appendImmediate = null
+      const text = appendBuffer.join('')
+      appendBuffer.length = 0
+      appendBufferScheduled = false
+      model.value += text
+    })
+  }
+
   function flushPendingUpdate() {
     lastFlushTime = Date.now()
     if (!pendingUpdate)
       return
     const { code } = pendingUpdate
     pendingUpdate = null
-  // Prefer the authoritative model value when there are buffered appends.
-  const prev = (appendBuffer.length > 0) ? model.getValue() : (lastKnownCode || model.getValue())
+    let prev: string
+    if (appendBuffer.length > 0) {
+      clearBufferedAppends()
+      prev = model.getValue()
+      lastKnownCode = prev
+    }
+    else {
+      prev = lastKnownCode || model.getValue()
+      if (!lastKnownCode)
+        lastKnownCode = prev
+    }
     if (prev === code)
       return
     if (code.startsWith(prev)) {
@@ -31,13 +61,7 @@ export function createMockWrapper(opts: { updateThrottleMs?: number } = {}) {
         appendBuffer.push(suffix)
         // schedule append flush on next tick
         if (!appendBufferScheduled) {
-          appendBufferScheduled = true
-          setImmediate(() => {
-            const text = appendBuffer.join('')
-            appendBuffer.length = 0
-            appendBufferScheduled = false
-            model.value += text
-          })
+          scheduleAppendFlush()
         }
       }
       lastKnownCode = code

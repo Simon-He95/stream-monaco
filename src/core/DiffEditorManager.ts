@@ -178,6 +178,56 @@ export class DiffEditorManager {
   private pendingPreparedDiffViewModel: monaco.editor.IDiffEditorViewModel | null
     = null
 
+  private cancelRafs() {
+    this.rafScheduler.cancel('sync-diff-presentation')
+    this.rafScheduler.cancel('capture-diff-unchanged-state')
+    this.rafScheduler.cancel('restore-diff-unchanged-state')
+    this.rafScheduler.cancel('patch-diff-unchanged-regions')
+    this.rafScheduler.cancel('maybe-scroll-diff')
+    this.rafScheduler.cancel('revealDiff')
+    this.rafScheduler.cancel('immediate-reveal-diff')
+    this.rafScheduler.cancel('maybe-resume-diff')
+    this.rafScheduler.cancel('content-size-change-diff')
+    this.rafScheduler.cancel('sync-last-known-modified')
+    this.rafScheduler.cancel('diff')
+    this.rafScheduler.cancel('appendDiff')
+  }
+
+  private clearRevealTimers() {
+    if (this.revealDebounceIdDiff != null) {
+      clearTimeout(this.revealDebounceIdDiff)
+      this.revealDebounceIdDiff = null
+    }
+    if (this.revealIdleTimerIdDiff != null) {
+      clearTimeout(this.revealIdleTimerIdDiff)
+      this.revealIdleTimerIdDiff = null
+    }
+  }
+
+  private resetAppendState() {
+    this.appendBufferDiffScheduled = false
+    this.appendBufferOriginalDiff.length = 0
+    this.appendBufferModifiedDiff.length = 0
+    if (this.appendFlushThrottleTimerDiff != null) {
+      clearTimeout(this.appendFlushThrottleTimerDiff)
+      this.appendFlushThrottleTimerDiff = null
+    }
+  }
+
+  private clearAsyncWork() {
+    this.cancelRafs()
+    this.pendingDiffUpdate = null
+    this.lastKnownModifiedDirty = false
+    this.resetAppendState()
+    this.clearRevealTimers()
+    if (this.diffScrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.diffScrollWatcherSuppressionTimer)
+      this.diffScrollWatcherSuppressionTimer = null
+    }
+    this.cancelScheduledHideDiffHunkActions()
+    this.clearPendingDiffThemeSync()
+  }
+
   private diffModelTransitionRequestId = 0
   private pendingDiffScrollRestorePosition: ReturnType<
     DiffEditorManager['captureDiffScrollPosition']
@@ -5335,18 +5385,7 @@ export class DiffEditorManager {
   cleanup() {
     this.diffModelTransitionRequestId += 1
     this.disposePendingPreparedDiffViewModel()
-    this.rafScheduler.cancel('diff')
-    this.pendingDiffUpdate = null
-    this.rafScheduler.cancel('appendDiff')
-    this.appendBufferDiffScheduled = false
-    this.appendBufferOriginalDiff.length = 0
-    this.appendBufferModifiedDiff.length = 0
-    if (this.appendFlushThrottleTimerDiff != null) {
-      clearTimeout(this.appendFlushThrottleTimerDiff)
-      this.appendFlushThrottleTimerDiff = null
-    }
-    this.rafScheduler.cancel('content-size-change-diff')
-    this.rafScheduler.cancel('sync-last-known-modified')
+    this.clearAsyncWork()
     this.disposeDiffHunkInteractions()
     this.disposeDiffUnchangedRegionEnhancements()
     this.disposeDiffPresentationTracking()
@@ -5391,18 +5430,6 @@ export class DiffEditorManager {
       this.lastContainer = null
     }
     // clear any pending reveal debounce and reset last reveal cache
-    if (this.revealDebounceIdDiff != null) {
-      clearTimeout(this.revealDebounceIdDiff)
-      this.revealDebounceIdDiff = null
-    }
-    if (this.revealIdleTimerIdDiff != null) {
-      clearTimeout(this.revealIdleTimerIdDiff)
-      this.revealIdleTimerIdDiff = null
-    }
-    if (this.diffScrollWatcherSuppressionTimer != null) {
-      clearTimeout(this.diffScrollWatcherSuppressionTimer)
-      this.diffScrollWatcherSuppressionTimer = null
-    }
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
@@ -5410,24 +5437,13 @@ export class DiffEditorManager {
     this.pendingDiffScrollRestoreBudget = 0
     this.diffHideUnchangedRegionsResolved = null
     this.diffHideUnchangedRegionsDeferred = false
-    this.clearPendingDiffThemeSync()
   }
 
   safeClean() {
     this.diffModelTransitionRequestId += 1
     this.disposePendingPreparedDiffViewModel()
-    this.rafScheduler.cancel('diff')
-    this.pendingDiffUpdate = null
-    this.rafScheduler.cancel('appendDiff')
-    this.appendBufferDiffScheduled = false
-    this.appendBufferOriginalDiff.length = 0
-    this.appendBufferModifiedDiff.length = 0
-    if (this.appendFlushThrottleTimerDiff != null) {
-      clearTimeout(this.appendFlushThrottleTimerDiff)
-      this.appendFlushThrottleTimerDiff = null
-    }
+    this.clearAsyncWork()
     this.hideDiffHunkActions()
-    this.cancelScheduledHideDiffHunkActions()
     this.disposeDiffUnchangedRegionEnhancements()
     this.disposeDiffPresentationTracking()
 
@@ -5446,25 +5462,10 @@ export class DiffEditorManager {
       this.diffHeightManager.dispose()
       this.diffHeightManager = null
     }
-    if (this.revealDebounceIdDiff != null) {
-      clearTimeout(this.revealDebounceIdDiff)
-      this.revealDebounceIdDiff = null
-    }
-    if (this.revealIdleTimerIdDiff != null) {
-      clearTimeout(this.revealIdleTimerIdDiff)
-      this.revealIdleTimerIdDiff = null
-    }
-    if (this.diffScrollWatcherSuppressionTimer != null) {
-      clearTimeout(this.diffScrollWatcherSuppressionTimer)
-      this.diffScrollWatcherSuppressionTimer = null
-    }
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
     this.diffHideUnchangedRegionsDeferred = false
-    this.clearPendingDiffThemeSync()
-    this.rafScheduler.cancel('content-size-change-diff')
-    this.rafScheduler.cancel('sync-last-known-modified')
   }
 
   private syncLastKnownModified() {

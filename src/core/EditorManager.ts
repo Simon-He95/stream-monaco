@@ -82,6 +82,49 @@ export class EditorManager {
         ?? 50
   }
 
+  private cancelRafs() {
+    this.rafScheduler.cancel('update')
+    this.rafScheduler.cancel('sync-last-known')
+    this.rafScheduler.cancel('content-size-change')
+    this.rafScheduler.cancel('maybe-scroll')
+    this.rafScheduler.cancel('reveal')
+    this.rafScheduler.cancel('immediate-reveal')
+    this.rafScheduler.cancel('maybe-resume')
+    this.rafScheduler.cancel('append')
+  }
+
+  private clearRevealTimers() {
+    if (this.revealDebounceId != null) {
+      clearTimeout(this.revealDebounceId)
+      this.revealDebounceId = null
+    }
+    if (this.revealIdleTimerId != null) {
+      clearTimeout(this.revealIdleTimerId)
+      this.revealIdleTimerId = null
+    }
+  }
+
+  private resetAppendState() {
+    this.appendBufferScheduled = false
+    this.appendBuffer.length = 0
+  }
+
+  private clearAsyncWork() {
+    this.cancelRafs()
+    this.pendingUpdate = null
+    this.lastKnownCodeDirty = false
+    this.resetAppendState()
+    this.clearRevealTimers()
+    if (this.scrollWatcherSuppressionTimer != null) {
+      clearTimeout(this.scrollWatcherSuppressionTimer)
+      this.scrollWatcherSuppressionTimer = null
+    }
+    if (this.updateThrottleTimer != null) {
+      clearTimeout(this.updateThrottleTimer)
+      this.updateThrottleTimer = null
+    }
+  }
+
   // initialize debug flag: prefer explicit runtime flag, then options, fallback to false
   private initDebugFlag() {
     // Browser global override: `window.__STREAM_MONACO_DEBUG__` (true/false)
@@ -602,17 +645,25 @@ export class EditorManager {
       return
     }
 
-    // If we have pending append buffer entries that haven't been flushed to the
-    // underlying model yet, prefer reading the authoritative model value plus
-    // any buffered suffix. When streaming at high rates it's possible that
-    // `appendBuffer` already contains text that hasn't been applied yet; using
-    // just `editorView.getValue()` would cause us to later append that same
-    // buffered text again (duplicating content). Concatenate the buffer to
-    // model value so `prevCode` reflects the true forthcoming model state.
-    const buffered = this.appendBuffer.length > 0 ? this.appendBuffer.join('') : ''
-    const prevCode = (this.appendBuffer.length > 0)
-      ? (this.editorView.getValue() + buffered)
-      : (this.lastKnownCode ?? this.editorView.getValue())
+    let prevCode: string
+    if (this.appendBuffer.length > 0) {
+      this.resetAppendState()
+      this.rafScheduler.cancel('append')
+      try {
+        prevCode = model.getValue()
+        this.lastKnownCode = prevCode
+      }
+      catch {
+        prevCode = this.lastKnownCode ?? ''
+      }
+    }
+    else if (this.lastKnownCode != null) {
+      prevCode = this.lastKnownCode
+    }
+    else {
+      prevCode = this.editorView.getValue()
+      this.lastKnownCode = prevCode
+    }
     if (prevCode === newCode)
       return
 
@@ -795,35 +846,7 @@ export class EditorManager {
   }
 
   cleanup() {
-    this.rafScheduler.cancel('update')
-    this.rafScheduler.cancel('sync-last-known')
-    this.rafScheduler.cancel('content-size-change')
-    // cancel any pending reveal/scroll tasks to avoid operating on disposed editor
-    this.rafScheduler.cancel('maybe-scroll')
-    this.rafScheduler.cancel('reveal')
-    this.rafScheduler.cancel('immediate-reveal')
-    this.rafScheduler.cancel('maybe-resume')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('append')
-    this.appendBufferScheduled = false
-    this.appendBuffer.length = 0
-
-    if (this.revealDebounceId != null) {
-      clearTimeout(this.revealDebounceId)
-      this.revealDebounceId = null
-    }
-    if (this.revealIdleTimerId != null) {
-      clearTimeout(this.revealIdleTimerId)
-      this.revealIdleTimerId = null
-    }
-    if (this.scrollWatcherSuppressionTimer != null) {
-      clearTimeout(this.scrollWatcherSuppressionTimer)
-      this.scrollWatcherSuppressionTimer = null
-    }
-    if (this.updateThrottleTimer != null) {
-      clearTimeout(this.updateThrottleTimer)
-      this.updateThrottleTimer = null
-    }
+    this.clearAsyncWork()
 
     if (this.editorView) {
       this.editorView.dispose()
@@ -846,9 +869,7 @@ export class EditorManager {
   }
 
   safeClean() {
-    this.rafScheduler.cancel('update')
-    this.pendingUpdate = null
-    this.rafScheduler.cancel('sync-last-known')
+    this.clearAsyncWork()
     // Cancel/cleanup watchers and timers
     if (this.scrollWatcher) {
       try {
@@ -857,22 +878,6 @@ export class EditorManager {
       catch { }
       this.scrollWatcher = null
     }
-    if (this.revealDebounceId != null) {
-      clearTimeout(this.revealDebounceId)
-      this.revealDebounceId = null
-    }
-    if (this.revealIdleTimerId != null) {
-      clearTimeout(this.revealIdleTimerId)
-      this.revealIdleTimerId = null
-    }
-    if (this.scrollWatcherSuppressionTimer != null) {
-      clearTimeout(this.scrollWatcherSuppressionTimer)
-      this.scrollWatcherSuppressionTimer = null
-    }
-    this.rafScheduler.cancel('maybe-scroll')
-    this.rafScheduler.cancel('reveal')
-    this.rafScheduler.cancel('immediate-reveal')
-    this.rafScheduler.cancel('maybe-resume')
 
     this._hasScrollBar = false
     this.shouldAutoScroll = !!this.autoScrollInitial

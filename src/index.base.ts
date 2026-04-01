@@ -559,6 +559,24 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
 
   // onUnmounted(cleanupEditor)
 
+  function clearFallbackAsyncWork() {
+    rafScheduler.cancel('update')
+    rafScheduler.cancel('append')
+    rafScheduler.cancel('reveal')
+    pendingUpdate = null
+    appendBufferScheduled = false
+    appendBuffer.length = 0
+    if (revealDebounceId != null) {
+      clearTimeout(revealDebounceId)
+      revealDebounceId = null
+    }
+    if (updateThrottleTimer != null) {
+      clearTimeout(updateThrottleTimer as unknown as number)
+      updateThrottleTimer = null
+    }
+    lastFlushTime = 0
+  }
+
   // Ensure cleanup stops the watcher
   function cleanupEditor() {
     if (editorMgr) {
@@ -569,13 +587,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
       diffMgr.cleanup()
       diffMgr = null
     }
-    // cancel rafs and pending updates
-    rafScheduler.cancel('update')
-    pendingUpdate = null
-    // cancel any pending append flushes and clear buffers for single editor
-    rafScheduler.cancel('append')
-    appendBufferScheduled = false
-    appendBuffer.length = 0
+    clearFallbackAsyncWork()
     // If an EditorManager was active it already disposed the editor instance.
     // Only dispose the module-level editorView when there is no editorMgr to avoid
     // double-dispose races (which can throw in some Monaco builds).
@@ -591,12 +603,6 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     if (themeWatcher) {
       themeWatcher()
       themeWatcher = null
-    }
-
-    // 清理可能由 updateCode 节流产生的延迟 timer
-    if (updateThrottleTimer != null) {
-      clearTimeout(updateThrottleTimer as unknown as number)
-      updateThrottleTimer = null
     }
 
     // height managers are managed by the respective managers
@@ -713,19 +719,17 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     // avoid repeated processedLanguage() calls
     const processedCodeLanguage = processedLanguage(codeLanguage)
 
-    // If there are pending append fragments buffered (not yet flushed to the
-    // model), prefer the authoritative model value instead of the optimistic
-    // `lastKnownCode`. Relying on `lastKnownCode` when the append buffer has
-    // unflushed data can lead to duplicated tails because `lastKnownCode` may
-    // already include the suffix while the model does not.
     let prevCode: string | null = null
     if (appendBuffer.length > 0) {
+      appendBuffer.length = 0
+      appendBufferScheduled = false
+      rafScheduler.cancel('append')
       try {
         prevCode = model.getValue()
         lastKnownCode = prevCode
       }
       catch {
-        prevCode = ''
+        prevCode = lastKnownCode ?? ''
       }
     }
     else {
@@ -971,9 +975,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     createDiffEditor,
     cleanupEditor,
     safeClean() {
-      // cancel any pending rafs and pending payloads
-      rafScheduler.cancel('update')
-      pendingUpdate = null
+      clearFallbackAsyncWork()
       // diff raf queues are managed by diffMgr
 
       // 单编辑器由管理器处理临时清理

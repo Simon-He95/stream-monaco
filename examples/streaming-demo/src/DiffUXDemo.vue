@@ -932,6 +932,10 @@ function createActiveScenario(version = 0) {
   return createStreamingScenario(version)
 }
 
+function currentScenarioMaxHeight() {
+  return diffScenario.value === 'line-info-reference' ? 2200 : 560
+}
+
 function applyScenarioPresentation() {
   monacoOptions.languages = ['typescript', 'zig']
   monacoOptions.theme = diffTheme.value
@@ -1470,12 +1474,21 @@ async function remountDiffEditor(
   cleanupEditor()
   const streamPreview = options.streamPreview ?? streamOutput.value
   const initialPair = streamPreview ? createStreamPreviewPair(pair) : pair
+  const pinnedPreviewHeight = streamPreview ? currentScenarioMaxHeight() : null
+  if (pinnedPreviewHeight != null) {
+    el.value.style.height = `${pinnedPreviewHeight}px`
+    el.value.style.minHeight = `${pinnedPreviewHeight}px`
+  }
   await createDiffEditor(
     el.value,
     initialPair.original,
     initialPair.modified,
     meta.language,
   )
+  if (pinnedPreviewHeight != null) {
+    el.value.style.height = `${pinnedPreviewHeight}px`
+    el.value.style.minHeight = `${pinnedPreviewHeight}px`
+  }
   if (streamPreview) showExpandedDuringStream()
   else applyCurrentFoldState()
   bindDiffUpdateEvent()
