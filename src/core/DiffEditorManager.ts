@@ -152,6 +152,7 @@ export class DiffEditorManager {
     original: number
     modified: number
   } | null = null
+  private preserveNativeDiffDecorationsOnStaleAppend = false
 
   private diffPresentationDisposables: monaco.IDisposable[] = []
   private fallbackOriginalDecorationIds: string[] = []
@@ -863,9 +864,18 @@ export class DiffEditorManager {
       return
 
     const nativeFresh = this.hasFreshNativeDiffResult()
+    const keepNativeDecorationsWhileStale
+      = !nativeFresh
+        && this.preserveNativeDiffDecorationsOnStaleAppend
+        && (
+          (this.diffEditorView.getLineChanges()?.length ?? 0) > 0
+          || !!this.lastContainer.querySelector?.(
+            '.line-insert, .line-delete, .gutter-insert, .gutter-delete',
+          )
+        )
     this.lastContainer.classList.toggle(
       'stream-monaco-diff-native-stale',
-      !nativeFresh,
+      !nativeFresh && !keepNativeDecorationsWhileStale,
     )
 
     if (nativeFresh) {
@@ -4502,6 +4512,7 @@ export class DiffEditorManager {
     this.appendBufferOriginalDiff.length = 0
     if (!text)
       return
+    this.preserveNativeDiffDecorationsOnStaleAppend = true
     this.appendToModel(this.originalModel, text)
   }
 
@@ -5067,12 +5078,21 @@ export class DiffEditorManager {
 
     const prevO = this.lastKnownOriginalCode!
     const prevM = this.lastKnownModifiedCode!
+    const originalTailAppend
+      = originalCode !== prevO
+        && originalCode.startsWith(prevO)
+        && prevO.length < originalCode.length
+    const modifiedTailAppend
+      = modifiedCode !== prevM
+        && modifiedCode.startsWith(prevM)
+        && prevM.length < modifiedCode.length
+    const hasContentChange = originalCode !== prevO || modifiedCode !== prevM
     if (originalCode !== prevO || modifiedCode !== prevM) {
       this.markDiffStreamingActivity()
     }
     let didImmediate = false
 
-    if (originalCode !== prevO && originalCode.startsWith(prevO)) {
+    if (originalTailAppend) {
       // Buffer streaming appends so diff computation can keep up and update
       // highlights progressively.
       this.appendOriginal(originalCode.slice(prevO.length))
@@ -5080,12 +5100,18 @@ export class DiffEditorManager {
       didImmediate = true
     }
 
-    if (modifiedCode !== prevM && modifiedCode.startsWith(prevM)) {
+    if (modifiedTailAppend) {
       // Buffer micro-appends so per-character streaming doesn't spam applyEdits
       // (which can starve rendering and diff computation).
       this.appendModified(modifiedCode.slice(prevM.length))
       this.lastKnownModifiedCode = modifiedCode
       didImmediate = true
+    }
+
+    if (hasContentChange) {
+      this.preserveNativeDiffDecorationsOnStaleAppend
+        = (originalCode === prevO || originalTailAppend)
+          && (modifiedCode === prevM || modifiedTailAppend)
     }
 
     if (
@@ -5114,8 +5140,10 @@ export class DiffEditorManager {
     const prev = this.lastKnownOriginalCode ?? this.originalModel.getValue()
     if (prev === newCode)
       return
+    const tailAppend = newCode.startsWith(prev) && prev.length < newCode.length
     this.markDiffStreamingActivity()
-    if (newCode.startsWith(prev) && prev.length < newCode.length) {
+    this.preserveNativeDiffDecorationsOnStaleAppend = tailAppend
+    if (tailAppend) {
       this.appendOriginal(newCode.slice(prev.length), codeLanguage)
     }
     else {
@@ -5136,8 +5164,10 @@ export class DiffEditorManager {
     const prev = this.lastKnownModifiedCode ?? this.modifiedModel.getValue()
     if (prev === newCode)
       return
+    const tailAppend = newCode.startsWith(prev) && prev.length < newCode.length
     this.markDiffStreamingActivity()
-    if (newCode.startsWith(prev) && prev.length < newCode.length) {
+    this.preserveNativeDiffDecorationsOnStaleAppend = tailAppend
+    if (tailAppend) {
       // Prefer the buffered append path for streaming.
       this.appendModified(newCode.slice(prev.length), codeLanguage)
     }
@@ -5173,6 +5203,7 @@ export class DiffEditorManager {
     if (!this.diffEditorView || !this.originalModel || !appendText)
       return
     this.markDiffStreamingActivity()
+    this.preserveNativeDiffDecorationsOnStaleAppend = true
     if (codeLanguage) {
       const lang = processedLanguage(codeLanguage)
       if (lang && this.originalModel.getLanguageId() !== lang)
@@ -5187,6 +5218,7 @@ export class DiffEditorManager {
     if (!this.diffEditorView || !this.modifiedModel || !appendText)
       return
     this.markDiffStreamingActivity()
+    this.preserveNativeDiffDecorationsOnStaleAppend = true
     if (codeLanguage) {
       const lang = processedLanguage(codeLanguage)
       if (lang && this.modifiedModel.getLanguageId() !== lang)
@@ -5220,6 +5252,7 @@ export class DiffEditorManager {
       return
 
     const transitionRequestId = ++this.diffModelTransitionRequestId
+    this.preserveNativeDiffDecorationsOnStaleAppend = false
     this.disposePendingPreparedDiffViewModel()
 
     const nextOriginal = models.original
@@ -5296,6 +5329,7 @@ export class DiffEditorManager {
     this.pendingDiffUpdate = null
     this.flushOriginalAppendBufferSync()
     this.flushModifiedAppendBufferSync()
+    this.preserveNativeDiffDecorationsOnStaleAppend = false
 
     const currentOriginal = this.originalModel
     const currentModified = this.modifiedModel
@@ -5384,6 +5418,7 @@ export class DiffEditorManager {
 
   cleanup() {
     this.diffModelTransitionRequestId += 1
+    this.preserveNativeDiffDecorationsOnStaleAppend = false
     this.disposePendingPreparedDiffViewModel()
     this.clearAsyncWork()
     this.disposeDiffHunkInteractions()
@@ -5441,6 +5476,7 @@ export class DiffEditorManager {
 
   safeClean() {
     this.diffModelTransitionRequestId += 1
+    this.preserveNativeDiffDecorationsOnStaleAppend = false
     this.disposePendingPreparedDiffViewModel()
     this.clearAsyncWork()
     this.hideDiffHunkActions()
@@ -5519,8 +5555,12 @@ export class DiffEditorManager {
       this.lastKnownModifiedCode = m.getValue()
 
     const prevO = this.lastKnownOriginalCode!
+    const originalTailAppend
+      = prevO !== original
+        && original.startsWith(prevO)
+        && prevO.length < original.length
     if (prevO !== original) {
-      if (original.startsWith(prevO) && prevO.length < original.length) {
+      if (originalTailAppend) {
         this.appendToModel(o, original.slice(prevO.length))
       }
       else {
@@ -5531,8 +5571,18 @@ export class DiffEditorManager {
 
     const prevM = m.getValue()
     const prevMLineCount = m.getLineCount()
+    const modifiedTailAppend
+      = prevM !== modified
+        && modified.startsWith(prevM)
+        && prevM.length < modified.length
+    const hasContentChange = prevO !== original || prevM !== modified
+    if (hasContentChange) {
+      this.preserveNativeDiffDecorationsOnStaleAppend
+        = (prevO === original || originalTailAppend)
+          && (prevM === modified || modifiedTailAppend)
+    }
     if (prevM !== modified) {
-      if (modified.startsWith(prevM) && prevM.length < modified.length) {
+      if (modifiedTailAppend) {
         this.appendToModel(m, modified.slice(prevM.length))
       }
       else {
@@ -5571,6 +5621,7 @@ export class DiffEditorManager {
     this.appendBufferModifiedDiff.length = 0
     if (!text)
       return
+    this.preserveNativeDiffDecorationsOnStaleAppend = true
     this.appendToModel(this.modifiedModel, text)
   }
 
@@ -5590,8 +5641,10 @@ export class DiffEditorManager {
     if (this.originalModel && this.appendBufferOriginalDiff.length > 0) {
       const oText = this.appendBufferOriginalDiff.join('')
       this.appendBufferOriginalDiff.length = 0
-      if (oText)
+      if (oText) {
+        this.preserveNativeDiffDecorationsOnStaleAppend = true
         this.appendToModel(this.originalModel, oText)
+      }
     }
 
     const me = this.diffEditorView.getModifiedEditor()
@@ -5670,6 +5723,7 @@ export class DiffEditorManager {
           prevLine,
           lastColumn,
         )
+        this.preserveNativeDiffDecorationsOnStaleAppend = true
         model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
         // update lastKnownModifiedCode lazily based on model value to avoid drift
         this.lastKnownModifiedCode = model.getValue()
@@ -5716,6 +5770,7 @@ export class DiffEditorManager {
     prevLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(prevLine)
     const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
+    this.preserveNativeDiffDecorationsOnStaleAppend = true
     model.applyEdits([{ range, text, forceMoveMarkers: true }])
     // update lastKnownModifiedCode lazily based on model value to avoid drift
     this.lastKnownModifiedCode = model.getValue()
