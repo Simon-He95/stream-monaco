@@ -325,6 +325,7 @@ export interface DiffModelPair {
 export interface DiffModelTransitionOptions {
   codeLanguage?: MonacoLanguage
   preserveViewState?: boolean
+  preserveModelState?: boolean
 }
 
 export interface DiffCodeValue {

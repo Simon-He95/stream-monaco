@@ -155,8 +155,14 @@ export class DiffEditorManager {
   private preserveNativeDiffDecorationsOnStaleAppend = false
 
   private diffPresentationDisposables: monaco.IDisposable[] = []
+  private diffPresentationObserver: MutationObserver | null = null
   private fallbackOriginalDecorationIds: string[] = []
   private fallbackModifiedDecorationIds: string[] = []
+  private fallbackInlineDeletedZoneIds: string[] = []
+  private fallbackInlineDeletedZoneSignature: string | null = null
+  private inlineDiffStreamingPresentationActive = false
+  private inlineDiffStreamingPresentationIdleTimer: number | null = null
+  private inlineDiffStreamingHeightFloor = 0
   private diffHunkHideTimer: number | null = null
   private diffUnchangedRegionDisposables: monaco.IDisposable[] = []
   private diffUnchangedRegionObserver: MutationObserver | null = null
@@ -175,12 +181,16 @@ export class DiffEditorManager {
   private diffPersistedUnchangedModelState:
     | monaco.editor.IDiffEditorViewState['modelState']
     | null = null
+  private diffPreviousUnchangedModelState:
+    | monaco.editor.IDiffEditorViewState['modelState']
+    | null = null
 
   private pendingPreparedDiffViewModel: monaco.editor.IDiffEditorViewModel | null
     = null
 
   private cancelRafs() {
     this.rafScheduler.cancel('sync-diff-presentation')
+    this.rafScheduler.cancel('sync-diff-layout')
     this.rafScheduler.cancel('capture-diff-unchanged-state')
     this.rafScheduler.cancel('restore-diff-unchanged-state')
     this.rafScheduler.cancel('patch-diff-unchanged-regions')
@@ -293,6 +303,12 @@ export class DiffEditorManager {
       minimumLineCount: 3,
       revealLineCount: 5,
     }
+  }
+
+  private resolveDiffGlyphMarginOption(
+    hideUnchangedRegions = this.resolveDiffHideUnchangedRegionsOption(),
+  ) {
+    return hideUnchangedRegions?.enabled ? true : this.options.glyphMargin
   }
 
   private resolveDiffLineStyleOption(): 'background' | 'bar' {
@@ -828,6 +844,397 @@ export class DiffEditorManager {
     else {
       this.fallbackModifiedDecorationIds = []
     }
+
+    this.clearFallbackInlineDeletedZones()
+  }
+
+  private clearFallbackInlineDeletedZones() {
+    const modifiedEditor = this.diffEditorView?.getModifiedEditor()
+    if (modifiedEditor && this.fallbackInlineDeletedZoneIds.length > 0) {
+      try {
+        modifiedEditor.changeViewZones?.((accessor: {
+          removeZone: (id: string) => void
+        }) => {
+          for (const id of this.fallbackInlineDeletedZoneIds)
+            accessor.removeZone(id)
+        })
+      }
+      catch {}
+    }
+    this.fallbackInlineDeletedZoneIds = []
+    this.clearFallbackInlineDeletedZoneWrapperContent()
+    this.fallbackInlineDeletedZoneSignature = null
+  }
+
+  private clearFallbackInlineDeletedZoneWrapperContent() {
+    const querySelectorAll
+      = typeof (this.lastContainer as {
+        querySelectorAll?: (selector: string) => ArrayLike<Element>
+      } | null | undefined)?.querySelectorAll === 'function'
+        ? this.lastContainer?.querySelectorAll.bind(this.lastContainer)
+        : null
+    if (!querySelectorAll)
+      return
+
+    const nodes = Array.from(
+      querySelectorAll(
+        '.stream-monaco-fallback-inline-delete-zone[data-stream-monaco-native-wrapper="true"], .stream-monaco-fallback-inline-delete-margin[data-stream-monaco-native-wrapper="true"]',
+      ) ?? [],
+    )
+    for (const node of nodes)
+      node.parentElement?.removeChild(node)
+  }
+
+  private clearInlineDiffStreamingPresentationIdleTimer() {
+    if (this.inlineDiffStreamingPresentationIdleTimer != null) {
+      clearTimeout(this.inlineDiffStreamingPresentationIdleTimer)
+      this.inlineDiffStreamingPresentationIdleTimer = null
+    }
+  }
+
+  private resetInlineDiffStreamingHeightFloor() {
+    this.inlineDiffStreamingHeightFloor = 0
+  }
+
+  private syncDiffEditorLayoutToContainer() {
+    if (!this.diffEditorView || !this.lastContainer)
+      return
+    const width = this.lastContainer.clientWidth || this.lastContainer.getBoundingClientRect().width
+    const height = this.lastContainer.clientHeight || this.lastContainer.getBoundingClientRect().height
+    if (!(width > 0) || !(height > 0))
+      return
+    try {
+      ;(this.diffEditorView as typeof this.diffEditorView & {
+        layout?: (dimension?: { width: number, height: number }) => void
+      }).layout?.({
+        width: Math.round(width),
+        height: Math.round(height),
+      })
+    }
+    catch {
+      try {
+        ;(this.diffEditorView as typeof this.diffEditorView & {
+          layout?: () => void
+        }).layout?.()
+      }
+      catch {}
+    }
+  }
+
+  private scheduleSyncDiffEditorLayoutToContainer() {
+    this.rafScheduler.schedule('sync-diff-layout', () => {
+      this.syncDiffEditorLayoutToContainer()
+    })
+  }
+
+  private readModelLineContent(
+    model: monaco.editor.ITextModel,
+    lineNumber: number,
+  ) {
+    const direct = (model as typeof model & {
+      getLineContent?: (line: number) => string
+    }).getLineContent
+    if (typeof direct === 'function')
+      return direct.call(model, lineNumber)
+    return model.getValue().split(/\r?\n/)[lineNumber - 1] ?? ''
+  }
+
+  private hasVisibleNativeInlineDeleteNodes() {
+    if (!this.lastContainer)
+      return false
+    const querySelectorAll
+      = typeof (this.lastContainer as {
+        querySelectorAll?: (selector: string) => ArrayLike<Element>
+      }).querySelectorAll === 'function'
+        ? (this.lastContainer as {
+            querySelectorAll: (selector: string) => ArrayLike<Element>
+          }).querySelectorAll.bind(this.lastContainer)
+        : null
+    if (!querySelectorAll)
+      return false
+
+    const nodes = Array.from(
+      querySelectorAll(
+        '.editor.modified .view-zones .line-delete, .editor.modified .inline-deleted-text, .editor.modified .inline-deleted-margin-view-zone',
+      ) ?? [],
+    )
+
+    return nodes.some((node) => {
+      if (!(node instanceof HTMLElement))
+        return false
+      const rect = node.getBoundingClientRect?.()
+      const style = globalThis.getComputedStyle?.(node)
+      return (
+        (rect?.width ?? 0) > 0
+        && (rect?.height ?? 0) > 0
+        && style?.display !== 'none'
+        && style?.visibility !== 'hidden'
+        && Number.parseFloat(style?.opacity || '1') > 0.01
+      )
+    })
+  }
+
+  private countNativeInlineDeleteZoneNodes() {
+    if (!this.lastContainer)
+      return 0
+    const querySelectorAll
+      = typeof (this.lastContainer as {
+        querySelectorAll?: (selector: string) => ArrayLike<Element>
+      }).querySelectorAll === 'function'
+        ? (this.lastContainer as {
+            querySelectorAll: (selector: string) => ArrayLike<Element>
+          }).querySelectorAll.bind(this.lastContainer)
+        : null
+    if (!querySelectorAll)
+      return 0
+
+    const nodes = Array.from(
+      querySelectorAll(
+        '.editor.modified .view-zones [monaco-view-zone], .editor.modified .margin-view-zones [monaco-view-zone]',
+      ) ?? [],
+    )
+
+    return nodes.filter((node) => {
+      if (!(node instanceof HTMLElement))
+        return false
+      return (
+        node.matches('.view-lines.line-delete')
+        || !!node.querySelector('.view-lines.line-delete')
+        || node.matches('.inline-deleted-margin-view-zone')
+        || !!node.querySelector('.inline-deleted-margin-view-zone')
+      )
+    }).length
+  }
+
+  private syncFallbackInlineDeletedZones(
+    lineChanges: monaco.editor.ILineChange[],
+  ) {
+    if (
+      typeof document === 'undefined'
+      || !this.diffEditorView
+      || !this.originalModel
+      || !this.isDiffInlineMode()
+    ) {
+      this.clearFallbackInlineDeletedZones()
+      return
+    }
+
+    const modifiedEditor = this.diffEditorView.getModifiedEditor()
+    const modifiedModel = modifiedEditor?.getModel?.()
+    const originalModel = this.originalModel
+    if (!modifiedEditor || !modifiedModel || !originalModel) {
+      this.fallbackInlineDeletedZoneIds = []
+      return
+    }
+
+    const lineHeightOption = (monaco.editor as typeof monaco.editor & {
+      EditorOption?: {
+        lineHeight?: unknown
+      }
+    }).EditorOption?.lineHeight
+    const lineHeight = modifiedEditor.getOption?.(lineHeightOption as any) ?? 20
+    const relevantChanges = lineChanges.filter(change => this.hasOriginalLines(change))
+    const nativeViewWrappers = Array.from(
+      this.lastContainer?.querySelectorAll?.(
+        '.editor.modified .view-zones [monaco-view-zone]',
+      ) ?? [],
+    ).filter((node): node is HTMLElement => {
+      return (
+        node instanceof HTMLElement
+        && !!node.querySelector('.view-lines.line-delete')
+      )
+    })
+    const nativeMarginWrappers = Array.from(
+      this.lastContainer?.querySelectorAll?.(
+        '.editor.modified .margin-view-zones [monaco-view-zone]',
+      ) ?? [],
+    ).filter((node): node is HTMLElement => {
+      return (
+        node instanceof HTMLElement
+        && !!node.querySelector('.inline-deleted-margin-view-zone')
+      )
+    })
+
+    const nativePairs = nativeViewWrappers
+      .map((viewWrapper) => {
+        const id = viewWrapper.getAttribute('monaco-view-zone')
+        if (!id)
+          return null
+        const marginWrapper = nativeMarginWrappers.find(
+          candidate => candidate.getAttribute('monaco-view-zone') === id,
+        )
+        return {
+          id,
+          top: Number.parseFloat(viewWrapper.style.top || 'NaN'),
+          viewWrapper,
+          marginWrapper: marginWrapper ?? null,
+        }
+      })
+      .filter((entry): entry is {
+        id: string
+        top: number
+        viewWrapper: HTMLElement
+        marginWrapper: HTMLElement | null
+      } => !!entry && Number.isFinite(entry.top))
+      .sort((left, right) => left.top - right.top)
+
+    if (nativePairs.length >= relevantChanges.length && relevantChanges.length > 0) {
+      const nextSignature = nativePairs
+        .slice(0, relevantChanges.length)
+        .map((pair, index) => {
+          const change = relevantChanges[index]
+          const text = Array.from(
+            {
+              length: change.originalEndLineNumber - change.originalStartLineNumber + 1,
+            },
+            (_, offset) =>
+              this.readModelLineContent(
+                originalModel,
+                change.originalStartLineNumber + offset,
+              ),
+          ).join('\n')
+          return `${pair.id}:${text}`
+        })
+        .join('|')
+      if (
+        nextSignature
+        && this.fallbackInlineDeletedZoneSignature === nextSignature
+        && this.fallbackInlineDeletedZoneIds.length === 0
+      ) {
+        return
+      }
+
+      if (this.fallbackInlineDeletedZoneIds.length > 0) {
+        try {
+          modifiedEditor.changeViewZones?.((accessor: {
+            removeZone: (id: string) => void
+          }) => {
+            for (const id of this.fallbackInlineDeletedZoneIds)
+              accessor.removeZone(id)
+          })
+        }
+        catch {}
+        this.fallbackInlineDeletedZoneIds = []
+      }
+      this.clearFallbackInlineDeletedZoneWrapperContent()
+
+      relevantChanges.forEach((change, index) => {
+        const pair = nativePairs[index]
+        const domNode = document.createElement('div')
+        domNode.className = 'stream-monaco-fallback-inline-delete-zone'
+        domNode.setAttribute('aria-hidden', 'true')
+        domNode.setAttribute('data-stream-monaco-native-wrapper', 'true')
+        modifiedEditor.applyFontInfo?.(domNode)
+
+        for (let line = change.originalStartLineNumber; line <= change.originalEndLineNumber; line++) {
+          const lineNode = document.createElement('div')
+          lineNode.className = 'stream-monaco-fallback-inline-delete-line'
+          lineNode.textContent = this.readModelLineContent(originalModel, line)
+          lineNode.style.height = `${lineHeight}px`
+          lineNode.style.lineHeight = `${lineHeight}px`
+          domNode.append(lineNode)
+        }
+
+        pair.viewWrapper.append(domNode)
+
+        if (pair.marginWrapper) {
+          const marginDomNode = document.createElement('div')
+          marginDomNode.className = 'stream-monaco-fallback-inline-delete-margin'
+          marginDomNode.setAttribute('aria-hidden', 'true')
+          marginDomNode.setAttribute('data-stream-monaco-native-wrapper', 'true')
+          marginDomNode.style.height = '100%'
+          modifiedEditor.applyFontInfo?.(marginDomNode)
+          pair.marginWrapper.append(marginDomNode)
+        }
+      })
+
+      this.fallbackInlineDeletedZoneSignature = nextSignature || null
+      return
+    }
+
+    this.clearFallbackInlineDeletedZoneWrapperContent()
+    const nextZones = relevantChanges
+      .map((change) => {
+        const lineCount
+          = change.originalEndLineNumber - change.originalStartLineNumber + 1
+        if (lineCount < 1)
+          return null
+
+        const domNode = document.createElement('div')
+        domNode.className = 'stream-monaco-fallback-inline-delete-zone'
+        domNode.setAttribute('aria-hidden', 'true')
+        modifiedEditor.applyFontInfo?.(domNode)
+
+        for (let line = change.originalStartLineNumber; line <= change.originalEndLineNumber; line++) {
+          const lineNode = document.createElement('div')
+          lineNode.className = 'stream-monaco-fallback-inline-delete-line'
+          lineNode.textContent = this.readModelLineContent(originalModel, line)
+          lineNode.style.height = `${lineHeight}px`
+          lineNode.style.lineHeight = `${lineHeight}px`
+          domNode.append(lineNode)
+        }
+
+        const marginDomNode = document.createElement('div')
+        marginDomNode.className = 'stream-monaco-fallback-inline-delete-margin'
+        marginDomNode.setAttribute('aria-hidden', 'true')
+        modifiedEditor.applyFontInfo?.(marginDomNode)
+
+        const anchorLine = Math.max(
+          0,
+          Math.min(
+            modifiedModel.getLineCount(),
+            (change.modifiedStartLineNumber || 1) - 1,
+          ),
+        )
+
+        return {
+          afterLineNumber: anchorLine,
+          heightInLines: lineCount,
+          domNode,
+          marginDomNode,
+        } satisfies monaco.editor.IViewZone
+      })
+      .filter(Boolean) as monaco.editor.IViewZone[]
+    const nextSignature = nextZones
+      .map((zone) => {
+        const text = typeof zone.domNode?.textContent === 'string'
+          ? zone.domNode.textContent
+          : ''
+        return `${zone.afterLineNumber}:${zone.heightInLines}:${text}`
+      })
+      .join('|')
+    if (
+      nextSignature
+      && this.fallbackInlineDeletedZoneSignature === nextSignature
+      && this.fallbackInlineDeletedZoneIds.length === nextZones.length
+    ) {
+      return
+    }
+
+    try {
+      modifiedEditor.changeViewZones?.((accessor: {
+        addZone: (zone: monaco.editor.IViewZone) => string
+        removeZone: (id: string) => void
+      }) => {
+        for (const id of this.fallbackInlineDeletedZoneIds)
+          accessor.removeZone(id)
+        this.fallbackInlineDeletedZoneIds = nextZones.map(zone =>
+          accessor.addZone(zone))
+      })
+      this.fallbackInlineDeletedZoneSignature = nextSignature || null
+    }
+    catch {
+      this.fallbackInlineDeletedZoneIds = []
+      this.fallbackInlineDeletedZoneSignature = null
+    }
+
+    try {
+      modifiedEditor.layout?.()
+      ;(modifiedEditor as typeof modifiedEditor & {
+        render?: (forceRedraw?: boolean) => void
+      }).render?.(true)
+    }
+    catch {}
   }
 
   private toWholeLineDecoration(
@@ -864,8 +1271,35 @@ export class DiffEditorManager {
       return
 
     const nativeFresh = this.hasFreshNativeDiffResult()
+    const useInlineMode = this.isDiffInlineMode()
+    const lineChanges = this.getEffectiveLineChanges()
+    const nativeInlineDeleteZoneCount
+      = useInlineMode
+        ? this.countNativeInlineDeleteZoneNodes()
+        : 0
+    const hasNativeInlineDeleteZoneNodes = nativeInlineDeleteZoneCount > 0
+    const hasNativeInlineDeleteNodes
+      = useInlineMode
+        && this.hasVisibleNativeInlineDeleteNodes()
+    const shouldKeepInlineFallback
+      = useInlineMode
+        && lineChanges.some(change => this.hasOriginalLines(change))
+        && !hasNativeInlineDeleteZoneNodes
+    const useInlineStaleFallback
+      = shouldKeepInlineFallback
+    this.lastContainer.classList.toggle(
+      'stream-monaco-diff-inline-native-ready',
+      useInlineMode
+        && !shouldKeepInlineFallback
+        && (
+          nativeFresh
+          || hasNativeInlineDeleteNodes
+          || hasNativeInlineDeleteZoneNodes
+        ),
+    )
     const keepNativeDecorationsWhileStale
-      = !nativeFresh
+      = !useInlineStaleFallback
+        && !nativeFresh
         && this.preserveNativeDiffDecorationsOnStaleAppend
         && (
           (this.diffEditorView.getLineChanges()?.length ?? 0) > 0
@@ -878,14 +1312,12 @@ export class DiffEditorManager {
       !nativeFresh && !keepNativeDecorationsWhileStale,
     )
 
-    if (nativeFresh) {
+    if (nativeFresh && !shouldKeepInlineFallback) {
       this.clearFallbackDiffDecorations()
       return
     }
-
     const originalEditor = this.diffEditorView.getOriginalEditor()
     const modifiedEditor = this.diffEditorView.getModifiedEditor()
-    const lineChanges = this.getEffectiveLineChanges()
 
     const originalDecorations = lineChanges
       .map(change =>
@@ -915,12 +1347,25 @@ export class DiffEditorManager {
       this.fallbackModifiedDecorationIds,
       modifiedDecorations,
     )
+
+    if (useInlineStaleFallback)
+      this.syncFallbackInlineDeletedZones(lineChanges)
+    else
+      this.clearFallbackInlineDeletedZones()
   }
 
   private disposeDiffPresentationTracking() {
     this.clearFallbackDiffDecorations()
+    if (this.diffPresentationObserver) {
+      this.diffPresentationObserver.disconnect()
+      this.diffPresentationObserver = null
+    }
+    this.clearInlineDiffStreamingPresentationIdleTimer()
+    this.inlineDiffStreamingPresentationActive = false
+    this.resetInlineDiffStreamingHeightFloor()
     if (this.lastContainer) {
       this.lastContainer.classList.remove('stream-monaco-diff-native-stale')
+      this.lastContainer.classList.remove('stream-monaco-diff-inline-native-ready')
     }
     this.diffComputedVersions = null
     this.diffPresentationDisposables.forEach(disposable => disposable.dispose())
@@ -1275,6 +1720,31 @@ export class DiffEditorManager {
   border: 0 !important;
   box-shadow: var(--stream-monaco-removed-line-shadow);
 }
+.stream-monaco-diff-root .monaco-editor .stream-monaco-fallback-inline-delete-zone {
+  box-sizing: border-box;
+  width: 100%;
+  pointer-events: none;
+}
+.stream-monaco-diff-root .monaco-editor .stream-monaco-fallback-inline-delete-line {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: hidden;
+  white-space: pre;
+  color: inherit;
+  background: var(--stream-monaco-removed-line-fill);
+  box-shadow: var(--stream-monaco-removed-line-shadow);
+}
+.stream-monaco-diff-root .monaco-editor .stream-monaco-fallback-inline-delete-margin {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--stream-monaco-removed-gutter);
+  pointer-events: none;
+}
+.stream-monaco-diff-root.stream-monaco-diff-inline-native-ready .stream-monaco-fallback-inline-delete-zone,
+.stream-monaco-diff-root.stream-monaco-diff-inline-native-ready .stream-monaco-fallback-inline-delete-line,
+.stream-monaco-diff-root.stream-monaco-diff-inline-native-ready .stream-monaco-fallback-inline-delete-margin {
+  display: none !important;
+}
 .stream-monaco-diff-root .monaco-editor .stream-monaco-fallback-gutter-insert,
 .stream-monaco-diff-root .monaco-diff-editor .stream-monaco-fallback-gutter-insert {
   background: var(--stream-monaco-added-gutter) !important;
@@ -1404,6 +1874,9 @@ export class DiffEditorManager {
 }
 .stream-monaco-diff-root .monaco-diff-editor .editor.original .current-line {
   width: var(--stream-monaco-original-margin-width, auto) !important;
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 .stream-monaco-diff-root .monaco-diff-editor .editor.original .monaco-scrollable-element.editor-scrollable {
   left: var(--stream-monaco-original-scrollable-left, auto) !important;
@@ -1416,6 +1889,9 @@ export class DiffEditorManager {
 }
 .stream-monaco-diff-root .monaco-diff-editor .editor.modified .current-line {
   width: var(--stream-monaco-modified-margin-width) !important;
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 .stream-monaco-diff-root .monaco-diff-editor .editor.modified .monaco-scrollable-element.editor-scrollable {
   left: var(--stream-monaco-modified-scrollable-left, var(--stream-monaco-modified-margin-width)) !important;
@@ -1446,14 +1922,38 @@ export class DiffEditorManager {
   border: 0 !important;
   overflow: hidden !important;
 }
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .monaco-editor,
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .monaco-editor-background,
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .lines-content {
+  width: 0 !important;
+  min-width: 0 !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .monaco-scrollable-element.editor-scrollable {
   left: 0 !important;
   width: 0 !important;
+}
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .margin,
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .margin-view-overlays,
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .margin-view-zones,
+.stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .overflow-guard {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
 }
 .stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.modified {
   left: 0 !important;
   width: 100% !important;
   border-left: 0 !important;
+}
+.stream-monaco-diff-root.stream-monaco-diff-inline.stream-monaco-diff-native-stale .monaco-diff-editor .editor.modified .view-lines.line-delete,
+.stream-monaco-diff-root.stream-monaco-diff-inline.stream-monaco-diff-native-stale .monaco-diff-editor .editor.modified .inline-deleted-margin-view-zone {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
 }
 .stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .gutter-delete,
 .stream-monaco-diff-root.stream-monaco-diff-inline .monaco-diff-editor .editor.original .gutter-insert,
@@ -2044,6 +2544,9 @@ export class DiffEditorManager {
   opacity: 0.92 !important;
   transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.14s ease, opacity 0.14s ease, box-shadow 0.14s ease;
 }
+.stream-monaco-diff-root .monaco-editor .fold-unchanged.stream-monaco-fold-unchanged-hidden {
+  display: none !important;
+}
 .stream-monaco-diff-root .monaco-editor .fold-unchanged:hover,
 .stream-monaco-diff-root .monaco-editor .fold-unchanged.stream-monaco-focus-visible {
   opacity: 1 !important;
@@ -2162,12 +2665,33 @@ export class DiffEditorManager {
   private capturePersistedDiffUnchangedState() {
     if (!this.diffEditorView)
       return
+    const hideUnchangedRegions
+      = this.diffHideUnchangedRegionsResolved
+        ?? this.resolveDiffHideUnchangedRegionsOption()
+    if (!hideUnchangedRegions?.enabled || this.diffHideUnchangedRegionsDeferred)
+      return
     const state = this.diffEditorView.saveViewState()
     if (!state?.modelState) {
       this.diffPersistedUnchangedModelState = null
       return
     }
     this.diffPersistedUnchangedModelState = this.cloneSerializableValue(
+      state.modelState,
+    )
+  }
+
+  private capturePreviousDiffUnchangedState() {
+    if (!this.diffEditorView)
+      return
+    const hideUnchangedRegions
+      = this.diffHideUnchangedRegionsResolved
+        ?? this.resolveDiffHideUnchangedRegionsOption()
+    if (!hideUnchangedRegions?.enabled || this.diffHideUnchangedRegionsDeferred)
+      return
+    const state = this.diffEditorView.saveViewState()
+    if (!state?.modelState)
+      return
+    this.diffPreviousUnchangedModelState = this.cloneSerializableValue(
       state.modelState,
     )
   }
@@ -2201,6 +2725,25 @@ export class DiffEditorManager {
       ),
     })
     this.applyPendingDiffScrollRestore()
+  }
+
+  private restorePreviousDiffUnchangedState() {
+    if (!this.diffEditorView || !this.diffPreviousUnchangedModelState)
+      return false
+    const current = this.diffEditorView.saveViewState()
+    if (!current)
+      return false
+    const previous = this.cloneSerializableValue(
+      this.diffPreviousUnchangedModelState,
+    )
+    this.diffEditorView.restoreViewState({
+      original: current.original,
+      modified: current.modified,
+      modelState: previous,
+    })
+    this.diffPersistedUnchangedModelState = this.cloneSerializableValue(previous)
+    this.applyPendingDiffScrollRestore()
+    return true
   }
 
   private scheduleRestorePersistedDiffUnchangedState() {
@@ -2418,7 +2961,7 @@ export class DiffEditorManager {
       readOnly: this.options.readOnly ?? true,
       lineDecorationsWidth: this.options.lineDecorationsWidth,
       lineNumbersMinChars: this.options.lineNumbersMinChars,
-      glyphMargin: this.options.glyphMargin,
+      glyphMargin: this.resolveDiffGlyphMarginOption(hideUnchangedRegions),
       fontFamily: this.options.fontFamily,
       fontSize: this.options.fontSize,
       lineHeight: this.options.lineHeight,
@@ -2446,6 +2989,12 @@ export class DiffEditorManager {
       return
 
     const hideUnchangedRegions = this.resolveDiffHideUnchangedRegionsOption()
+    const shouldRecomputeDiffViewModelForUnchangedRegions
+      = !this.diffHideUnchangedRegionsDeferred
+        && hideUnchangedRegions?.enabled === true
+        && this.diffHideUnchangedRegionsResolved?.enabled === false
+        && !!this.originalModel
+        && !!this.modifiedModel
     const presentationOptions
       = this.resolveDiffPresentationEditorOptions(hideUnchangedRegions)
 
@@ -2466,6 +3015,19 @@ export class DiffEditorManager {
     this.applyDiffRootAppearanceClass()
     this.schedulePatchDiffUnchangedRegionsAfterInteraction(1)
     this.repositionDiffHunkNodes()
+
+    if (shouldRecomputeDiffViewModelForUnchangedRegions) {
+      void this.setDiffModels(
+        {
+          original: this.originalModel!,
+          modified: this.modifiedModel!,
+        },
+        {
+          preserveViewState: true,
+          preserveModelState: false,
+        },
+      )
+    }
   }
 
   private restoreDeferredDiffUnchangedRegions() {
@@ -2491,6 +3053,23 @@ export class DiffEditorManager {
   }
 
   private markDiffStreamingActivity() {
+    this.lastContainer?.classList.remove('stream-monaco-diff-inline-native-ready')
+    if (this.isDiffInlineMode()) {
+      this.inlineDiffStreamingPresentationActive = true
+      this.inlineDiffStreamingHeightFloor = Math.max(
+        this.inlineDiffStreamingHeightFloor,
+        this.diffHeightManager?.getLastApplied() ?? 0,
+        this.lastContainer?.getBoundingClientRect?.().height ?? 0,
+      )
+      this.clearInlineDiffStreamingPresentationIdleTimer()
+      this.inlineDiffStreamingPresentationIdleTimer = setTimeout(() => {
+        this.inlineDiffStreamingPresentationIdleTimer = null
+        this.inlineDiffStreamingPresentationActive = false
+        this.resetInlineDiffStreamingHeightFloor()
+        this.scheduleSyncDiffPresentationDecorations()
+        this.diffHeightManager?.update()
+      }, 3000) as unknown as number
+    }
     const hideUnchangedRegions = this.diffHideUnchangedRegionsResolved
     if (!this.diffEditorView || !hideUnchangedRegions?.enabled)
       return
@@ -3424,6 +4003,14 @@ export class DiffEditorManager {
       action.tabIndex = shouldUseMergedSecondary ? -1 : 0
       if (action.dataset.streamMonacoExpandPatched !== 'true') {
         action.dataset.streamMonacoExpandPatched = 'true'
+        const handleCaptureExpand = () => {
+          this.capturePreviousDiffUnchangedState()
+        }
+        action.addEventListener('click', handleCaptureExpand, { capture: true })
+        this.diffUnchangedRegionDisposables.push({
+          dispose: () =>
+            action.removeEventListener('click', handleCaptureExpand, true),
+        })
         this.createDomDisposable(
           this.diffUnchangedRegionDisposables,
           action,
@@ -3447,8 +4034,10 @@ export class DiffEditorManager {
 
       const activate = () => {
         const action = node.querySelector('a')
-        if (action instanceof HTMLElement)
+        if (action instanceof HTMLElement) {
+          this.capturePreviousDiffUnchangedState()
           action.click()
+        }
       }
 
       this.createDomDisposable(
@@ -3655,6 +4244,7 @@ export class DiffEditorManager {
         = primaryNode.querySelector<HTMLElement>('a, button')
           ?? secondaryNode.querySelector<HTMLElement>('a, button')
       if (action instanceof HTMLElement) {
+        this.capturePreviousDiffUnchangedState()
         action.click()
         this.scheduleCapturePersistedDiffUnchangedState(1)
       }
@@ -3684,12 +4274,31 @@ export class DiffEditorManager {
     this.createDomDisposable(
       this.diffUnchangedRegionDisposables,
       node,
+      'mouseup',
+      (event) => {
+        const mouseEvent = event as MouseEvent
+        if (mouseEvent.button !== 0)
+          return
+        if (!this.restorePreviousDiffUnchangedState())
+          return
+        event.preventDefault()
+        event.stopPropagation()
+        this.schedulePatchDiffUnchangedRegionsAfterInteraction()
+      },
+    )
+    this.createDomDisposable(
+      this.diffUnchangedRegionDisposables,
+      node,
       'keydown',
       (event) => {
         const keyboardEvent = event as KeyboardEvent
         if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ')
           return
         keyboardEvent.preventDefault()
+        if (this.restorePreviousDiffUnchangedState()) {
+          this.schedulePatchDiffUnchangedRegionsAfterInteraction()
+          return
+        }
         this.dispatchSyntheticMouseDown(node)
         this.scheduleCapturePersistedDiffUnchangedState(1)
       },
@@ -3705,6 +4314,18 @@ export class DiffEditorManager {
     const centers = this.lastContainer.querySelectorAll<HTMLElement>(
       '.diff-hidden-lines .center',
     )
+    const modifiedHiddenSummaryMidpoints = Array.from(
+      this.lastContainer.querySelectorAll<HTMLElement>(
+        '.editor.modified .diff-hidden-lines .center',
+      ),
+    )
+      .map((node) => {
+        const rect = node.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0)
+          return null
+        return rect.top + (rect.height / 2)
+      })
+      .filter((value): value is number => value !== null)
     Array.from(centers)
       .sort(
         (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top,
@@ -3762,7 +4383,18 @@ export class DiffEditorManager {
 
     const foldGlyphs
       = this.lastContainer.querySelectorAll<HTMLElement>('.fold-unchanged')
-    foldGlyphs.forEach(node => this.patchDiffUnchangedFoldGlyph(node))
+    foldGlyphs.forEach((node) => {
+      const rect = node.getBoundingClientRect()
+      const midpoint = rect.top + (rect.height / 2)
+      const overlapsHiddenSummary = modifiedHiddenSummaryMidpoints.some(
+        summaryMidpoint => Math.abs(summaryMidpoint - midpoint) <= 8,
+      )
+      node.classList.toggle(
+        'stream-monaco-fold-unchanged-hidden',
+        overlapsHiddenSummary,
+      )
+      this.patchDiffUnchangedFoldGlyph(node)
+    })
 
     if (viewZoneHeightsChanged)
       this.schedulePatchDiffUnchangedRegions()
@@ -3831,6 +4463,26 @@ export class DiffEditorManager {
       this.applyDiffRootAppearanceClass()
       this.schedulePatchDiffUnchangedRegions()
     }
+    const handleFoldMouseUp = (event: any) => {
+      if (event?.event?.rightButton)
+        return
+      const targetElement = event?.target?.element
+      const className
+        = typeof targetElement?.className === 'string'
+          ? targetElement.className
+          : ''
+      if (!className.includes('fold-unchanged'))
+        return
+      if (!this.diffPreviousUnchangedModelState)
+        return
+      event?.event?.preventDefault?.()
+      event?.event?.stopPropagation?.()
+      requestAnimationFrame(() => {
+        if (!this.restorePreviousDiffUnchangedState())
+          return
+        this.schedulePatchDiffUnchangedRegionsAfterInteraction()
+      })
+    }
     this.diffUnchangedRegionDisposables.push(
       this.diffEditorView.onDidUpdateDiff(() => {
         repatch()
@@ -3852,6 +4504,12 @@ export class DiffEditorManager {
       modifiedEditor.onDidScrollChange(() =>
         this.schedulePatchDiffUnchangedRegionsAfterScroll(),
       ),
+    )
+    this.diffUnchangedRegionDisposables.push(
+      originalEditor.onMouseUp(handleFoldMouseUp),
+    )
+    this.diffUnchangedRegionDisposables.push(
+      modifiedEditor.onMouseUp(handleFoldMouseUp),
     )
     this.createDomDisposable(
       this.diffUnchangedRegionDisposables,
@@ -4076,8 +4734,12 @@ export class DiffEditorManager {
   }
 
   private isDiffInlineMode() {
-    const diffRoot = this.lastContainer?.querySelector('.monaco-diff-editor')
-    if (diffRoot instanceof HTMLElement)
+    const diffRoot = typeof (this.lastContainer as {
+      querySelector?: (selector: string) => unknown
+    } | null | undefined)?.querySelector === 'function'
+      ? this.lastContainer?.querySelector('.monaco-diff-editor')
+      : null
+    if (typeof HTMLElement !== 'undefined' && diffRoot instanceof HTMLElement)
       return !diffRoot.classList.contains('side-by-side')
     return this.isOriginalEditorCollapsed()
   }
@@ -4516,7 +5178,7 @@ export class DiffEditorManager {
     this.appendToModel(this.originalModel, text)
   }
 
-  private computedHeight(): number {
+  private computeRawHeight(): number {
     if (!this.diffEditorView)
       return Math.min(1 * 18 + padding, this.maxHeightValue)
     const modifiedEditor = this.diffEditorView.getModifiedEditor()
@@ -4537,10 +5199,51 @@ export class DiffEditorManager {
     return Math.min(desired, this.maxHeightValue)
   }
 
+  private computedHeight(): number {
+    const rawHeight = this.computeRawHeight()
+    if (!this.isDiffInlineMode())
+      return rawHeight
+    if (
+      !this.inlineDiffStreamingPresentationActive
+      && this.inlineDiffStreamingHeightFloor <= 0
+    ) {
+      return rawHeight
+    }
+    const lockedHeight = Math.max(rawHeight, this.inlineDiffStreamingHeightFloor)
+    this.inlineDiffStreamingHeightFloor = lockedHeight
+    return lockedHeight
+  }
+
+  private eagerlyGrowDiffContainerHeight() {
+    if (!this.lastContainer)
+      return
+    const next = this.computedHeight()
+    if (!Number.isFinite(next) || next <= 0)
+      return
+    const applied = Number.parseFloat(this.lastContainer.style.height || '0') || 0
+    const measured
+      = this.lastContainer.getBoundingClientRect?.().height
+        ?? this.lastContainer.clientHeight
+        ?? 0
+    const baseline = Math.max(applied, measured)
+    if (next <= baseline + 1)
+      return
+    this.lastContainer.style.height = `${next}px`
+    this.cachedComputedHeightDiff = next
+    this.scheduleSyncDiffEditorLayoutToContainer()
+  }
+
   private isOverflowAutoDiff() {
     if (!this.lastContainer)
       return false
     return this.computedHeight() >= this.maxHeightValue - 1
+  }
+
+  private shouldAvoidOptimisticMaxHeightWriteDiff() {
+    const hideUnchangedRegions = this.diffHideUnchangedRegionsResolved
+    return this.isDiffInlineMode()
+      && hideUnchangedRegions?.enabled === true
+      && !this.diffHideUnchangedRegionsDeferred
   }
 
   private shouldPerformImmediateRevealDiff() {
@@ -4805,6 +5508,7 @@ export class DiffEditorManager {
         if (this.lastContainer)
           this.lastContainer.style.height = `${target}px`
         await this.waitForHeightAppliedDiff(target)
+        this.syncDiffEditorLayoutToContainer()
       }
       else {
         // nothing
@@ -4860,6 +5564,17 @@ export class DiffEditorManager {
     // cause overlay widgets to intercept wheel input and drift visually.
     container.style.overflow = 'hidden'
     container.style.maxHeight = this.maxHeightCSS
+    container.innerHTML = ''
+
+    const editorMount = typeof document !== 'undefined'
+      ? document.createElement('div')
+      : container
+    if (editorMount !== container) {
+      editorMount.style.width = '100%'
+      editorMount.style.height = '100%'
+      editorMount.style.overflow = 'hidden'
+      container.append(editorMount)
+    }
 
     const lang = processedLanguage(language) || language
     this.originalModel = monaco.editor.createModel(originalCode, lang)
@@ -4870,7 +5585,7 @@ export class DiffEditorManager {
     this.diffHideUnchangedRegionsResolved = hideUnchangedRegions
     this.diffHideUnchangedRegionsDeferred = false
 
-    this.diffEditorView = monaco.editor.createDiffEditor(container, {
+    this.diffEditorView = monaco.editor.createDiffEditor(editorMount, {
       automaticLayout: true,
       scrollBeyondLastLine: false,
       renderSideBySide: true,
@@ -4884,6 +5599,7 @@ export class DiffEditorManager {
         ...(this.options.scrollbar || {}),
       },
       ...this.options,
+      glyphMargin: this.resolveDiffGlyphMarginOption(hideUnchangedRegions),
       hideUnchangedRegions,
     })
     monaco.editor.setTheme(currentTheme)
@@ -4933,8 +5649,15 @@ export class DiffEditorManager {
     // Compute and apply the editor's height (with internal hysteresis to
     // avoid tiny changes). Provide a small minimum visible height so the
     // editor doesn't collapse to a single line while content is streaming.
-    const MIN_VISIBLE_HEIGHT = Math.min(120, this.maxHeightValue)
-    container.style.minHeight = `${MIN_VISIBLE_HEIGHT}px`
+    const minVisibleHeight = this.shouldDeferTailAppendForInlineStreaming()
+      ? 0
+      : Math.min(120, this.maxHeightValue)
+    if (minVisibleHeight > 0)
+      container.style.minHeight = `${minVisibleHeight}px`
+    else if (typeof container.style.removeProperty === 'function')
+      container.style.removeProperty('min-height')
+    else
+      delete (container.style as unknown as Record<string, string>).minHeight
 
     if (this.diffHeightManager) {
       this.diffHeightManager.dispose()
@@ -4965,6 +5688,7 @@ export class DiffEditorManager {
     this.diffPresentationDisposables.push(
       this.diffEditorView.onDidUpdateDiff(() => {
         this.diffComputedVersions = this.captureCurrentDiffVersions()
+        this.syncDiffEditorLayoutToContainer()
         this.scheduleSyncDiffPresentationDecorations()
       }),
     )
@@ -4978,6 +5702,51 @@ export class DiffEditorManager {
         this.scheduleSyncDiffPresentationDecorations()
       }),
     )
+    const originalLayoutDisposable = oEditor.onDidLayoutChange?.(() => {
+      this.scheduleSyncDiffPresentationDecorations()
+    })
+    if (originalLayoutDisposable)
+      this.diffPresentationDisposables.push(originalLayoutDisposable)
+    const modifiedLayoutDisposable = mEditor.onDidLayoutChange?.(() => {
+      this.scheduleSyncDiffPresentationDecorations()
+    })
+    if (modifiedLayoutDisposable)
+      this.diffPresentationDisposables.push(modifiedLayoutDisposable)
+    if (
+      typeof MutationObserver !== 'undefined'
+      && this.lastContainer
+    ) {
+      this.diffPresentationObserver = new MutationObserver((mutations) => {
+        const shouldSync = mutations.some((mutation) => {
+          if (mutation.type !== 'childList')
+            return false
+          const nodes = Array.from(mutation.addedNodes).concat(
+            Array.from(mutation.removedNodes),
+          )
+          return nodes.some((node) => {
+            if (!(node instanceof HTMLElement))
+              return false
+            return (
+              node.matches(
+                '.line-delete, .inline-deleted-text, .inline-deleted-margin-view-zone',
+              )
+              || !!node.querySelector(
+                '.line-delete, .inline-deleted-text, .inline-deleted-margin-view-zone',
+              )
+              || !!node.closest(
+                '.editor.modified .view-zones, .editor.modified .margin-view-zones',
+              )
+            )
+          })
+        })
+        if (shouldSync)
+          this.scheduleSyncDiffPresentationDecorations()
+      })
+      this.diffPresentationObserver.observe(this.lastContainer, {
+        childList: true,
+        subtree: true,
+      })
+    }
     oEditor.onDidContentSizeChange?.(() => {
       this._hasScrollBar = false
       this.rafScheduler.schedule('content-size-change-diff', () => {
@@ -4987,10 +5756,23 @@ export class DiffEditorManager {
           = oEditor.getOption?.(monaco.editor.EditorOption.lineHeight)
             ?? this.cachedLineHeightDiff
         this.cachedComputedHeightDiff = this.computedHeight()
+        if (this.lastContainer) {
+          const applied = Number.parseFloat(this.lastContainer.style.height || '0') || 0
+          if (
+            this.cachedComputedHeightDiff > applied + 1
+            && (
+              this.cachedComputedHeightDiff < this.maxHeightValue - 1
+              || !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+            )
+          ) {
+            this.lastContainer.style.height = `${this.cachedComputedHeightDiff}px`
+          }
+        }
         if (this.diffHeightManager?.isSuppressed())
           return
         this.diffHeightManager?.update()
-        const computed = this.computedHeight()
+        this.scheduleSyncDiffEditorLayoutToContainer()
+        const computed = this.cachedComputedHeightDiff
         if (this.lastContainer) {
           this.lastContainer.style.overflow = 'hidden'
           if (
@@ -5012,10 +5794,23 @@ export class DiffEditorManager {
           = mEditor.getOption?.(monaco.editor.EditorOption.lineHeight)
             ?? this.cachedLineHeightDiff
         this.cachedComputedHeightDiff = this.computedHeight()
+        if (this.lastContainer) {
+          const applied = Number.parseFloat(this.lastContainer.style.height || '0') || 0
+          if (
+            this.cachedComputedHeightDiff > applied + 1
+            && (
+              this.cachedComputedHeightDiff < this.maxHeightValue - 1
+              || !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+            )
+          ) {
+            this.lastContainer.style.height = `${this.cachedComputedHeightDiff}px`
+          }
+        }
         if (this.diffHeightManager?.isSuppressed())
           return
         this.diffHeightManager?.update()
-        const computed = this.computedHeight()
+        this.scheduleSyncDiffEditorLayoutToContainer()
+        const computed = this.cachedComputedHeightDiff
         if (this.lastContainer) {
           this.lastContainer.style.overflow = 'hidden'
           if (
@@ -5090,9 +5885,11 @@ export class DiffEditorManager {
     if (originalCode !== prevO || modifiedCode !== prevM) {
       this.markDiffStreamingActivity()
     }
+    const deferTailAppendForInline
+      = this.shouldDeferTailAppendForInlineStreaming()
     let didImmediate = false
 
-    if (originalTailAppend) {
+    if (originalTailAppend && !deferTailAppendForInline) {
       // Buffer streaming appends so diff computation can keep up and update
       // highlights progressively.
       this.appendOriginal(originalCode.slice(prevO.length))
@@ -5100,7 +5897,7 @@ export class DiffEditorManager {
       didImmediate = true
     }
 
-    if (modifiedTailAppend) {
+    if (modifiedTailAppend && !deferTailAppendForInline) {
       // Buffer micro-appends so per-character streaming doesn't spam applyEdits
       // (which can starve rendering and diff computation).
       this.appendModified(modifiedCode.slice(prevM.length))
@@ -5127,6 +5924,24 @@ export class DiffEditorManager {
     else if (didImmediate) {
       // already applied
     }
+  }
+
+  private shouldDeferTailAppendForInlineStreaming() {
+    const renderSideBySide = this.options.renderSideBySide ?? true
+    if (renderSideBySide === false)
+      return true
+
+    const useInlineViewWhenSpaceIsLimited
+      = this.options.useInlineViewWhenSpaceIsLimited ?? true
+    if (!useInlineViewWhenSpaceIsLimited)
+      return false
+
+    const breakpoint
+      = this.options.renderSideBySideInlineBreakpoint ?? 900
+    const width = this.lastContainer?.getBoundingClientRect?.().width
+      ?? this.lastContainer?.clientWidth
+      ?? 0
+    return width > 0 && width <= breakpoint
   }
 
   updateOriginal(newCode: string, codeLanguage?: string) {
@@ -5180,11 +5995,16 @@ export class DiffEditorManager {
       this.applyMinimalEditToModel(this.modifiedModel, prevAfterFlush, newCode)
       const newLine = this.modifiedModel.getLineCount()
       if (newLine !== prevLine) {
+        this.eagerlyGrowDiffContainerHeight()
         const shouldImmediate = this.shouldPerformImmediateRevealDiff()
         if (shouldImmediate)
           this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
         const computed = this.computedHeight()
-        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+        if (
+          computed >= this.maxHeightValue - 1
+          && this.lastContainer
+          && !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+        ) {
           this.lastContainer.style.height = `${this.maxHeightValue}px`
           this.lastContainer.style.overflow = 'hidden'
         }
@@ -5335,6 +6155,8 @@ export class DiffEditorManager {
     const currentModified = this.modifiedModel
     const shouldRestorePersistedUnchangedState
       = preserveViewState && !sameContent
+    const shouldRestoreSavedModelState
+      = options.preserveModelState ?? true
     const preservedScrollPosition = preserveViewState
       ? this.captureDiffScrollPosition()
       : null
@@ -5342,7 +6164,7 @@ export class DiffEditorManager {
       = preserveViewState && sameContent
         ? this.captureModifiedViewportAnchor()
         : null
-    const viewState = preserveViewState
+    const viewState = preserveViewState && shouldRestoreSavedModelState
       ? this.diffEditorView.saveViewState()
       : null
 
@@ -5350,8 +6172,9 @@ export class DiffEditorManager {
       preservedScrollPosition,
       shouldRestorePersistedUnchangedState ? 2 : 0,
     )
-    if (shouldRestorePersistedUnchangedState)
+    if (shouldRestorePersistedUnchangedState) {
       this.capturePersistedDiffUnchangedState()
+    }
 
     const applyModelSwap = () => {
       this.diffEditorView?.setModel(nextModelTarget)
@@ -5468,6 +6291,7 @@ export class DiffEditorManager {
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
+    this.diffPreviousUnchangedModelState = null
     this.pendingDiffScrollRestorePosition = null
     this.pendingDiffScrollRestoreBudget = 0
     this.diffHideUnchangedRegionsResolved = null
@@ -5501,7 +6325,11 @@ export class DiffEditorManager {
     this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
+    this.diffPreviousUnchangedModelState = null
     this.diffHideUnchangedRegionsDeferred = false
+    this.clearInlineDiffStreamingPresentationIdleTimer()
+    this.inlineDiffStreamingPresentationActive = false
+    this.resetInlineDiffStreamingHeightFloor()
   }
 
   private syncLastKnownModified() {
@@ -5591,11 +6419,16 @@ export class DiffEditorManager {
       this.lastKnownModifiedCode = modified
       const newMLineCount = m.getLineCount()
       if (newMLineCount !== prevMLineCount) {
+        this.eagerlyGrowDiffContainerHeight()
         const shouldImmediate = this.shouldPerformImmediateRevealDiff()
         if (shouldImmediate)
           this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
         const computed = this.computedHeight()
-        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+        if (
+          computed >= this.maxHeightValue - 1
+          && this.lastContainer
+          && !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+        ) {
           this.lastContainer.style.height = `${this.maxHeightValue}px`
           this.lastContainer.style.overflow = 'hidden'
         }
@@ -5735,6 +6568,7 @@ export class DiffEditorManager {
             ? requestAnimationFrame(resolve)
             : setTimeout(resolve, 0),
         )
+        this.eagerlyGrowDiffContainerHeight()
         const shouldImmediate = this.shouldPerformImmediateRevealDiff()
         log('diff', 'flushAppendBufferDiff chunk metrics', {
           idx,
@@ -5745,7 +6579,11 @@ export class DiffEditorManager {
         if (shouldImmediate)
           this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
         const computed = this.computedHeight()
-        if (computed >= this.maxHeightValue - 1 && this.lastContainer) {
+        if (
+          computed >= this.maxHeightValue - 1
+          && this.lastContainer
+          && !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+        ) {
           this.lastContainer.style.height = `${this.maxHeightValue}px`
           this.lastContainer.style.overflow = 'hidden'
         }
@@ -5778,6 +6616,7 @@ export class DiffEditorManager {
     const newLine = model.getLineCount()
     // keep internal line count cache in sync
     this.lastKnownModifiedLineCount = newLine
+    this.eagerlyGrowDiffContainerHeight()
     const shouldImmediate = this.shouldPerformImmediateRevealDiff()
     if (shouldImmediate)
       this.suppressScrollWatcherDiff(this.scrollWatcherSuppressionMs + 800)
@@ -5785,8 +6624,13 @@ export class DiffEditorManager {
     // immediately so the editor doesn't show an intermediate scrollbar
     // before the debounced height manager settles.
     const computed = this.computedHeight()
-    if (computed >= this.maxHeightValue - 1 && this.lastContainer)
+    if (
+      computed >= this.maxHeightValue - 1
+      && this.lastContainer
+      && !this.shouldAvoidOptimisticMaxHeightWriteDiff()
+    ) {
       this.lastContainer.style.height = `${this.maxHeightValue}px`
+    }
     if (shouldImmediate) {
       this.scheduleImmediateRevealAfterLayoutDiff(newLine)
     }
