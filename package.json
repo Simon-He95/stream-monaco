@@ -1,7 +1,7 @@
 {
   "name": "stream-monaco",
   "type": "module",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "packageManager": "pnpm@10.24.0",
   "description": "A framework-agnostic Monaco Editor integration with Shiki syntax highlighting, built for real-time streaming updates and efficient diff editing.",
   "author": "Simon He",
