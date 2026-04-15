@@ -1,228 +1,316 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-interface MockScheduler {
-  callbacks: Map<string, FrameRequestCallback>
-  cancel: ReturnType<typeof vi.fn>
-}
-
-const rafInstances: MockScheduler[] = []
-
-function createScheduler(): MockScheduler {
-  const callbacks = new Map<string, FrameRequestCallback>()
-  const cancel = vi.fn((kind: string) => {
-    callbacks.delete(kind)
+function deferred<T = unknown>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
   })
-  return {
-    callbacks,
-    cancel,
-    schedule(kind: string, cb: FrameRequestCallback) {
-      callbacks.set(kind, cb)
-    },
-  } as MockScheduler & { schedule: (kind: string, cb: FrameRequestCallback) => void }
+  return { promise, resolve, reject }
 }
 
-vi.mock('../src/utils/raf', () => {
-  return {
-    createRafScheduler: vi.fn(() => {
-      const scheduler = createScheduler()
-      const api = {
-        schedule(kind: string, cb: FrameRequestCallback) {
-          scheduler.callbacks.set(kind, cb)
-        },
-        cancel: scheduler.cancel,
-        callbacks: scheduler.callbacks,
-      }
-      rafInstances.push(api)
-      return api
-    }),
-  }
-})
+async function loadUseMonacoHarness(options: Record<string, any> = {}) {
+  vi.resetModules()
 
-vi.mock('../src/utils/registerMonacoThemes', () => {
-  let currentPromise: Promise<any> | null = null
-  return {
-    registerMonacoThemes: vi.fn(async () => null),
-    clearHighlighterCache: vi.fn(),
-    getOrCreateHighlighter: vi.fn(),
-    getThemeRegisterPromise: vi.fn(() => currentPromise),
-    setThemeRegisterPromise: vi.fn((p: Promise<any> | null) => {
-      currentPromise = p
-      return currentPromise
-    }),
-  }
-})
+  const registerCalls: Array<{
+    themes: any
+    languages: any
+    deferred: ReturnType<typeof deferred>
+  }> = []
+  const editorManagers: any[] = []
+  const diffManagers: any[] = []
 
-function createStubEditor() {
-  const model = {
-    getValue: vi.fn(() => ''),
-    getLineCount: vi.fn(() => 1),
-    setValue: vi.fn(),
-    getLineMaxColumn: vi.fn(() => 1),
-    getLanguageId: vi.fn(() => 'javascript'),
-    applyEdits: vi.fn(),
-  }
-  return {
-    dispose: vi.fn(),
-    getValue: vi.fn(() => model.getValue()),
-    getModel: vi.fn(() => model),
-    getOption: vi.fn(() => 16),
-    onDidContentSizeChange: vi.fn(),
-    onDidChangeModelContent: vi.fn(),
-    revealLineInCenterIfOutsideViewport: vi.fn(),
-    revealLine: vi.fn(),
-    executeEdits: vi.fn(),
-    getScrollTop: vi.fn(() => 0),
-    getScrollHeight: vi.fn(() => 0),
-    getLayoutInfo: vi.fn(() => ({ height: 0 })),
-  }
-}
-
-vi.mock('../src/core/EditorManager', () => {
-  return {
-    EditorManager: class {
-      cleanup = vi.fn()
-      safeClean = vi.fn()
-      appendCode = vi.fn()
-      updateCode = vi.fn()
-      setLanguage = vi.fn()
-      async createEditor() {
-        return createStubEditor()
-      }
-    },
-  }
-})
-
-vi.mock('../src/core/DiffEditorManager', () => {
-  return {
-    DiffEditorManager: class {
-      cleanup = vi.fn()
-      safeClean = vi.fn()
-      appendOriginal = vi.fn()
-      appendModified = vi.fn()
-      updateDiff = vi.fn()
-      updateOriginal = vi.fn()
-      updateModified = vi.fn()
-      setLanguage = vi.fn()
-      async createDiffEditor() {
-        return {
-          dispose: vi.fn(),
-          getModifiedEditor: () => createStubEditor(),
-          getOriginalEditor: () => createStubEditor(),
-          setModel: vi.fn(),
+  vi.doMock('../src/utils/registerMonacoThemes', () => {
+    return {
+      registerMonacoThemes: vi.fn((themes: any, languages: any) => {
+        const call = {
+          themes,
+          languages,
+          deferred: deferred(),
         }
-      }
-      getDiffModels() {
-        return { original: null, modified: null }
-      }
-    },
-  }
-})
+        registerCalls.push(call)
+        return call.deferred.promise
+      }),
+      clearHighlighterCache: vi.fn(),
+      getOrCreateHighlighter: vi.fn(),
+    }
+  })
 
-vi.mock('../src/monaco-shim', () => {
-  const setTheme = vi.fn()
-  const editor = {
-    setTheme,
-    create: vi.fn(() => createStubEditor()),
-    createDiffEditor: vi.fn(() => ({
-      dispose: vi.fn(),
-      getModifiedEditor: () => createStubEditor(),
-      getOriginalEditor: () => createStubEditor(),
-      setModel: vi.fn(),
-    })),
-    createModel: vi.fn(() => ({
-      dispose: vi.fn(),
-      getValue: vi.fn(() => ''),
-      setValue: vi.fn(),
-      getLineCount: vi.fn(() => 1),
-      getLanguageId: vi.fn(() => 'javascript'),
-    })),
-    setModelLanguage: vi.fn(),
-    EditorOption: { lineHeight: 16 },
-    ScrollType: { Smooth: 1 },
-  }
-  const languages = {
-    getLanguages: () => [{ id: 'javascript' }],
-    register: vi.fn(),
-  }
-  const Range = class {
-    constructor(
-      public lineNumber: number,
-      public column: number,
-      public endLineNumber: number,
-      public endColumn: number,
-    ) {}
-  }
-  const monaco = { editor, languages, Range, ScrollType: { Smooth: 1 } }
-  return { default: monaco, editor, languages, Range, ScrollType: { Smooth: 1 } }
-})
+  vi.doMock('../src/core/EditorManager', () => {
+    return {
+      EditorManager: class {
+        cleanup = vi.fn()
+        safeClean = vi.fn()
+        appendCode = vi.fn((appendText: string) => {
+          this.code += appendText
+        })
+        updateCode = vi.fn((code: string) => {
+          this.code = code
+        })
+        setLanguage = vi.fn()
+        code = ''
+        throttleMs = 50
+        editorView = {
+          dispose: vi.fn(),
+          getModel: vi.fn(() => ({
+            getValue: () => this.code,
+            getLanguageId: () => 'javascript',
+          })),
+        }
+        createEditor = vi.fn(async (
+          _container: HTMLElement,
+          code: string,
+          _language: string,
+          _theme: string,
+        ) => {
+          this.code = code
+          return this.editorView
+        })
 
-function getScheduler() {
-  const inst = rafInstances.at(-1)
-  if (!inst)
-    throw new Error('No raf scheduler captured')
-  return inst
-}
+        constructor(...args: any[]) {
+          this.throttleMs = args[8] ?? 50
+          editorManagers.push(this)
+        }
 
-async function createMonacoAPI(options: Record<string, any> = {}) {
-  const mod = await import('../src/index')
-  return mod.useMonaco({
+        getEditorView() {
+          return this.editorView
+        }
+
+        getCode() {
+          return this.code
+        }
+
+        setUpdateThrottleMs(ms: number) {
+          this.throttleMs = ms
+        }
+
+        getUpdateThrottleMs() {
+          return this.throttleMs
+        }
+      },
+    }
+  })
+
+  vi.doMock('../src/core/DiffEditorManager', () => {
+    return {
+      DiffEditorManager: class {
+        cleanup = vi.fn()
+        safeClean = vi.fn()
+        notifyThemeChange = vi.fn()
+        updateDiff = vi.fn()
+        updateOriginal = vi.fn()
+        updateModified = vi.fn()
+        appendOriginal = vi.fn()
+        appendModified = vi.fn()
+        refreshDiffPresentation = vi.fn()
+        setLanguage = vi.fn()
+        diffEditorView = { dispose: vi.fn() }
+        models = { original: null, modified: null }
+        createDiffEditor = vi.fn(async () => this.diffEditorView)
+
+        constructor() {
+          diffManagers.push(this)
+        }
+
+        getDiffEditorView() {
+          return this.diffEditorView
+        }
+
+        getDiffModels() {
+          return this.models
+        }
+
+        async setDiffModels(models: any) {
+          this.models = models
+        }
+      },
+    }
+  })
+
+  vi.doMock('../src/monaco-shim', () => {
+    const setTheme = vi.fn()
+    const setModelLanguage = vi.fn()
+    const editor = {
+      setTheme,
+      setModelLanguage,
+      EditorOption: { lineHeight: 16 },
+      ScrollType: { Smooth: 1 },
+    }
+    const languages = {
+      getLanguages: () => [{ id: 'javascript' }],
+      register: vi.fn(),
+    }
+    const Range = class {
+      constructor(
+        public startLineNumber: number,
+        public startColumn: number,
+        public endLineNumber: number,
+        public endColumn: number,
+      ) {}
+    }
+    return {
+      default: { editor, languages, Range, ScrollType: { Smooth: 1 } },
+      editor,
+      languages,
+      Range,
+      ScrollType: { Smooth: 1 },
+    }
+  })
+
+  const base = await import('../src/index.base')
+  const monaco = await import('../src/monaco-shim')
+
+  const api = base.useMonaco({
     themes: ['vitesse-dark', 'vitesse-light'],
     languages: ['javascript'],
     ...options,
   })
+
+  return {
+    api,
+    monaco,
+    registerCalls,
+    editorManagers,
+    diffManagers,
+  }
 }
 
-function flushRaf(kind: string) {
-  const inst = getScheduler()
-  const cb = inst.callbacks.get(kind)
-  if (cb)
-    cb(0 as any)
-}
-
-describe('useMonaco fallback cleanup', () => {
+describe('useMonaco create lifecycle', () => {
   beforeEach(() => {
-    rafInstances.length = 0
-    vi.useFakeTimers()
+    vi.clearAllMocks()
   })
 
   afterEach(() => {
-    vi.useRealTimers()
-    rafInstances.length = 0
     vi.resetModules()
     vi.clearAllMocks()
   })
 
-  it('safeClean clears pending fallback timers and raf work', async () => {
-    const api = await createMonacoAPI({ updateThrottleMs: 50 })
-    api.updateCode('console.log(1)', 'javascript')
-    flushRaf('update')
-    api.updateCode('console.log(2)', 'javascript')
-    flushRaf('update')
-    expect(vi.getTimerCount()).toBe(1)
+  it('replays the latest queued update after createEditor commits', async () => {
+    const { api, registerCalls, editorManagers } = await loadUseMonacoHarness()
+    const container = {} as HTMLElement
 
-    api.safeClean()
+    const createPromise = api.createEditor(container, 'initial', 'javascript')
+    expect(registerCalls).toHaveLength(1)
 
-    const scheduler = getScheduler()
-    expect(scheduler.cancel).toHaveBeenCalledWith('reveal')
-    expect(scheduler.cancel).toHaveBeenCalledWith('append')
-    expect(scheduler.cancel).toHaveBeenCalledWith('update')
-    expect(vi.getTimerCount()).toBe(0)
+    api.updateCode('queued', 'javascript')
+
+    registerCalls[0].deferred.resolve(null)
+    await createPromise
+
+    expect(editorManagers).toHaveLength(1)
+    expect(editorManagers[0].updateCode).toHaveBeenCalledWith('queued', 'javascript')
   })
 
-  it('cleanupEditor cancels fallback raf work and throttled flushes', async () => {
-    const api = await createMonacoAPI({ updateThrottleMs: 50 })
-    api.updateCode('console.log(1)', 'javascript')
-    flushRaf('update')
-    api.updateCode('console.log(2)', 'javascript')
-    flushRaf('update')
-    expect(vi.getTimerCount()).toBe(1)
+  it('rejects superseded createEditor requests and disposes request-local resources', async () => {
+    const firstDispose = vi.fn()
+    const secondDispose = vi.fn()
+    let beforeCreateCount = 0
+
+    const { api, registerCalls } = await loadUseMonacoHarness({
+      onBeforeCreate: () => {
+        beforeCreateCount += 1
+        return [{ dispose: beforeCreateCount === 1 ? firstDispose : secondDispose }]
+      },
+    })
+
+    const firstPromise = api.createEditor({} as HTMLElement, 'first', 'javascript')
+    expect(registerCalls).toHaveLength(1)
+
+    const secondPromise = api.createEditor({} as HTMLElement, 'second', 'javascript')
+    expect(registerCalls).toHaveLength(2)
+    expect(firstDispose).toHaveBeenCalledTimes(1)
+    expect(secondDispose).not.toHaveBeenCalled()
+
+    registerCalls[1].deferred.resolve(null)
+    await secondPromise
+
+    registerCalls[0].deferred.resolve(null)
+    await expect(firstPromise).rejects.toMatchObject({
+      message: 'Editor creation was superseded',
+      code: 'STREAM_MONACO_CREATE_SUPERSEDED',
+    })
+
+    expect(secondDispose).not.toHaveBeenCalled()
+  })
+
+  it('cleanupEditor cancels an in-flight create and disposes pending resources', async () => {
+    const dispose = vi.fn()
+    const { api, registerCalls, editorManagers } = await loadUseMonacoHarness({
+      onBeforeCreate: () => [{ dispose }],
+    })
+
+    const createPromise = api.createEditor({} as HTMLElement, 'code', 'javascript')
+    expect(registerCalls).toHaveLength(1)
 
     api.cleanupEditor()
 
-    const scheduler = getScheduler()
-    expect(scheduler.cancel).toHaveBeenCalledWith('reveal')
-    expect(scheduler.cancel).toHaveBeenCalledWith('append')
-    expect(scheduler.cancel).toHaveBeenCalledWith('update')
-    expect(vi.getTimerCount()).toBe(0)
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(editorManagers).toHaveLength(0)
+
+    registerCalls[0].deferred.resolve(null)
+    await expect(createPromise).rejects.toMatchObject({
+      message: 'Editor creation was superseded',
+      code: 'STREAM_MONACO_CREATE_SUPERSEDED',
+    })
+  })
+
+  it('stabilizes createEditor on the latest requested theme during registration', async () => {
+    const { api, registerCalls, editorManagers } = await loadUseMonacoHarness()
+    const container = {} as HTMLElement
+
+    const createPromise = api.createEditor(container, 'code', 'javascript')
+    expect(registerCalls).toHaveLength(1)
+
+    const setThemePromise = api.setTheme('vitesse-light')
+    expect(registerCalls).toHaveLength(2)
+
+    registerCalls[0].deferred.resolve(null)
+    for (let i = 0; i < 5 && registerCalls.length < 3; i++) {
+      await Promise.resolve()
+    }
+
+    expect(registerCalls).toHaveLength(3)
+
+    registerCalls[1].deferred.resolve(null)
+    registerCalls[2].deferred.resolve(null)
+
+    await Promise.all([createPromise, setThemePromise])
+
+    expect(editorManagers).toHaveLength(1)
+    expect(editorManagers[0].createEditor).toHaveBeenCalledWith(
+      container,
+      'code',
+      'javascript',
+      'vitesse-light',
+    )
+  })
+
+  it('safeClean does not cancel an in-flight create and cleanupEditor disposes committed resources', async () => {
+    const dispose = vi.fn()
+    const { api, registerCalls, editorManagers } = await loadUseMonacoHarness({
+      onBeforeCreate: () => [{ dispose }],
+    })
+
+    const createPromise = api.createEditor({} as HTMLElement, 'code', 'javascript')
+    expect(registerCalls).toHaveLength(1)
+
+    api.safeClean()
+    expect(dispose).not.toHaveBeenCalled()
+
+    registerCalls[0].deferred.resolve(null)
+    await createPromise
+
+    expect(editorManagers).toHaveLength(1)
+    expect(editorManagers[0].safeClean).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
+
+    api.safeClean()
+    expect(editorManagers[0].safeClean).toHaveBeenCalledTimes(1)
+    expect(dispose).not.toHaveBeenCalled()
+
+    api.cleanupEditor()
+    expect(editorManagers[0].cleanup).toHaveBeenCalledTimes(1)
+    expect(dispose).toHaveBeenCalledTimes(1)
   })
 })

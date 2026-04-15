@@ -15,6 +15,8 @@ export class EditorManager {
   private pendingUpdate: { code: string, lang: string } | null = null
   private _hasScrollBar = false
   private updateThrottleMs = 50
+  private minimalEditMaxCharsValue = minimalEditMaxChars
+  private minimalEditMaxChangeRatioValue = minimalEditMaxChangeRatio
   private lastUpdateFlushTime = 0
   private updateThrottleTimer: number | null = null
 
@@ -80,6 +82,12 @@ export class EditorManager {
       = this.updateThrottleMsOption
         ?? (this.options as any).updateThrottleMs
         ?? 50
+    this.minimalEditMaxCharsValue
+      = (this.options as any).minimalEditMaxChars
+        ?? minimalEditMaxChars
+    this.minimalEditMaxChangeRatioValue
+      = (this.options as any).minimalEditMaxChangeRatio
+        ?? minimalEditMaxChangeRatio
   }
 
   private cancelRafs() {
@@ -722,8 +730,8 @@ export class EditorManager {
       return
     // Avoid expensive minimal edit calculation for extremely large documents
     // or when the size delta is very large; fallback to full setValue.
-    const maxChars = minimalEditMaxChars
-    const ratio = minimalEditMaxChangeRatio
+    const maxChars = this.minimalEditMaxCharsValue
+    const ratio = this.minimalEditMaxChangeRatioValue
     const maxLen = Math.max(prev.length, next.length)
     const changeRatio = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
     if (prev.length + next.length > maxChars || changeRatio > ratio) {
@@ -830,6 +838,10 @@ export class EditorManager {
 
   getEditorView() {
     return this.editorView
+  }
+
+  getCode() {
+    return this.editorView?.getModel()?.getValue() ?? null
   }
 
   setUpdateThrottleMs(ms: number) {
