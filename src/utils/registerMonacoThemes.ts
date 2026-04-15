@@ -169,6 +169,14 @@ async function ensureMonacoHighlighter(
  */
 export function clearHighlighterCache() {
   highlighterCache.clear()
+  monacoHighlighterPromise = null
+  lastPatchedHighlighter = null
+  lastPatchedLanguages = new Set<string>()
+  monacoThemeByKey.clear()
+  monacoLanguageSet.clear()
+  themeRegisterPromise = null
+  languagesRegistered = false
+  currentLanguages = []
 }
 
 /**

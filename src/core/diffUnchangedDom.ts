@@ -158,6 +158,27 @@ export function shouldIgnoreDiffUnchangedCenterClickTarget(
     && Boolean(target.closest('a, .breadcrumb-item'))
 }
 
+export function shouldHandleDiffUnchangedCenterClick(
+  event: Pick<MouseEvent, 'button' | 'target'>,
+) {
+  return (
+    event.button === 0
+    && !shouldIgnoreDiffUnchangedCenterClickTarget(event.target)
+  )
+}
+
+export function activateDiffUnchangedExpandAction(
+  root: ParentNode | null | undefined,
+  onBeforeActivate?: (action: HTMLElement) => void,
+) {
+  const action = findDiffUnchangedExpandAction(root)
+  if (!action)
+    return false
+  onBeforeActivate?.(action)
+  action.click()
+  return true
+}
+
 export function syncDiffUnchangedCenterNode(
   node: HTMLElement,
   mergeRole: 'none' | 'primary' | 'secondary',
@@ -277,6 +298,38 @@ export function syncDiffUnchangedRevealButtonNode(
   button.toggleAttribute('aria-hidden', !handle)
   button.title = handle ? label : ''
   button.setAttribute('aria-label', handle ? label : '')
+}
+
+export function bindDiffUnchangedRevealButtonAction(
+  button: HTMLButtonElement,
+  handle: HTMLElement | null,
+  onActivate: (handle: HTMLElement) => void,
+) {
+  button.onclick = handle
+    ? (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onActivate(handle)
+      }
+    : null
+}
+
+export function shouldHandleDiffUnchangedWheel(
+  event: Pick<WheelEvent, 'deltaX' | 'deltaY'>,
+) {
+  return Math.abs(event.deltaY) >= 0.5 || Math.abs(event.deltaX) >= 0.5
+}
+
+export function resolveDiffUnchangedWheelScrollTarget(
+  scrollTop: number,
+  scrollLeft: number,
+  event: Pick<WheelEvent, 'deltaX' | 'deltaY'>,
+) {
+  return {
+    targetScrollTop: scrollTop + event.deltaY,
+    targetScrollLeft: scrollLeft + event.deltaX,
+    syncHorizontal: Math.abs(event.deltaX) >= 0.5,
+  }
 }
 
 export function syncDiffUnchangedBridgeNode(

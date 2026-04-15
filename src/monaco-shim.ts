@@ -14,5 +14,7 @@ import * as _monaco from 'monaco-editor/esm/vs/editor/editor.api'
 // the `monaco.editor` typing available.
 const monaco: typeof _monaco = _monaco as any
 
+export const ScrollType
+  = Reflect.get(_monaco as object, 'ScrollType') ?? (_monaco as any).editor?.ScrollType
 export { monaco as default }
 export * from 'monaco-editor/esm/vs/editor/editor.api'

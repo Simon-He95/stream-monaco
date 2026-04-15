@@ -151,6 +151,18 @@ yarn add stream-monaco
 
 Note: Vue is optional. If you don't use Vue, you don't need to install it.
 
+### Example apps
+
+- `examples/streaming-demo` — Vue 3 + Vite demo with streaming, diff, and diff UX routes
+- `examples/react-demo` — React + Vite demo with in-place theme/language switching and `appendCode()` streaming
+
+Quick start:
+
+```bash
+pnpm -C examples/streaming-demo dev
+pnpm -C examples/react-demo dev
+```
+
 ### Basic usage (Vue)
 
 ```vue
@@ -682,6 +694,8 @@ import { preloadMonacoWorkers } from 'stream-monaco/legacy'
 preloadMonacoWorkers()
 ```
 
+The default `stream-monaco` and `stream-monaco/legacy` entry modules intentionally run a best-effort Monaco worker setup during import. The package metadata marks only those published entry files as side-effectful so tree-shaking stays correct for the rest of the library.
+
 If you load Monaco via CDN/AMD (e.g. `<script src=".../vs/loader.js">`), `stream-monaco/legacy` also includes a best-effort auto worker setup that creates a same-origin `blob:` worker and `importScripts()` Monaco’s `vs/base/worker/workerMain.js`. If auto-detection can’t find your Monaco base URL, call:
 
 ```ts
@@ -721,9 +735,9 @@ pnpm build
 
 ### Clearing shiki highlighter cache
 
-The library caches Shiki highlighters internally to avoid recreating them for the same theme combinations. In long-running apps that dynamically create many combinations, you can clear the cache to free memory or reset state (e.g., in tests or on shutdown):
+The library caches Shiki highlighters internally to avoid recreating them for the same theme combinations. In long-running apps that dynamically create many combinations, you can clear the cache to free memory or fully reset the shared highlighter state (e.g., in tests or on shutdown):
 
-- `clearHighlighterCache()` — clears the internal cache
+- `clearHighlighterCache()` — clears cached highlighters and resets the shared Monaco/Shiki highlighter state
 - `getHighlighterCacheSize()` — returns number of cached entries
 
 Call `clearHighlighterCache()` only when highlighters are no longer needed; otherwise, the cache improves performance by reusing instances.

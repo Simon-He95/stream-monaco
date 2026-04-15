@@ -1,0 +1,169 @@
+:root {
+  color: #14213d;
+  background:
+    radial-gradient(circle at top, rgba(249, 233, 199, 0.7), transparent 40%),
+    linear-gradient(180deg, #f7f2e8 0%, #ece4d5 100%);
+  font-family:
+    "Iowan Old Style",
+    "Palatino Linotype",
+    "Book Antiqua",
+    Georgia,
+    serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+code {
+  font-family:
+    "SFMono-Regular",
+    Consolas,
+    "Liberation Mono",
+    monospace;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.page-shell {
+  width: min(1100px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.hero-card,
+.editor-card {
+  border: 1px solid rgba(20, 33, 61, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 252, 245, 0.9);
+  box-shadow: 0 18px 40px rgba(67, 54, 28, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.hero-card {
+  padding: 24px;
+}
+
+.editor-card {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: #8c5e34;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  line-height: 0.95;
+}
+
+.lede {
+  max-width: 52rem;
+  margin: 16px 0 0;
+  font-size: 1.02rem;
+  line-height: 1.65;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.control-group {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 248, 236, 0.92);
+  border: 1px solid rgba(140, 94, 52, 0.12);
+}
+
+.control-group span {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 0.86rem;
+  color: #6f4c28;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  border: 1px solid rgba(20, 33, 61, 0.15);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #fffdf7;
+  color: #14213d;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(20, 33, 61, 0.32);
+}
+
+button.active {
+  background: #14213d;
+  color: #fff9ec;
+}
+
+.status-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(20, 33, 61, 0.1);
+  font-size: 0.94rem;
+}
+
+.editor-frame {
+  min-height: 460px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(20, 33, 61, 0.1);
+}
+
+@media (max-width: 760px) {
+  .page-shell {
+    width: min(100vw - 20px, 1100px);
+    padding-top: 14px;
+  }
+
+  .hero-card,
+  .editor-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-frame {
+    min-height: 380px;
+  }
+}

@@ -56,6 +56,18 @@ npm install stream-monaco
 yarn add stream-monaco
 ```
 
+### 示例工程
+
+- `examples/streaming-demo`：Vue 3 + Vite 示例，包含 streaming、diff、diff UX 路由
+- `examples/react-demo`：React + Vite 示例，演示不重建编辑器的主题/语言切换与 `appendCode()` 流式追加
+
+快速启动：
+
+```bash
+pnpm -C examples/streaming-demo dev
+pnpm -C examples/react-demo dev
+```
+
 ### 基础使用（Vue）
 
 #### 简单示例
@@ -887,6 +899,8 @@ import { preloadMonacoWorkers } from 'stream-monaco/legacy'
 preloadMonacoWorkers()
 ```
 
+默认的 `stream-monaco` 与 `stream-monaco/legacy` 入口在模块求值时会做一次 best-effort 的 Monaco worker 安装。包元数据只把这些已发布入口文件标记为有 side effects，其余内部模块仍保持正常 tree-shaking。
+
 #### 2. Diff 编辑器流式更新时内容区空白
 
 确保在调用 `createEditor` / `createDiffEditor` 之前已正确配置 Monaco 的 workers（建议尽早调用 `preloadMonacoWorkers()`）。
@@ -939,9 +953,9 @@ pnpm build
 
 ### Clearing shiki highlighter cache
 
-The library caches shiki highlighters internally to avoid recreating them for the same theme combinations. In long-running applications that may dynamically create many distinct theme combinations, you can clear the cache to free memory or reset state (for example in tests or on app shutdown):
+The library caches shiki highlighters internally to avoid recreating them for the same theme combinations. In long-running applications that may dynamically create many distinct theme combinations, you can clear the cache to free memory or fully reset the shared highlighter state (for example in tests or on app shutdown):
 
-- `clearHighlighterCache()` — clears the internal cache
+- `clearHighlighterCache()` — clears cached highlighters and resets the shared Monaco/Shiki highlighter state
 - `getHighlighterCacheSize()` — returns number of cached entries
 
 Call `clearHighlighterCache()` when you are certain highlighters are no longer needed (for example during teardown), otherwise leaving the cache enabled provides a performance benefit by reusing previously-created highlighters.

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  activateDiffUnchangedExpandAction,
+  bindDiffUnchangedRevealButtonAction,
   collectDiffUnchangedViewZoneIds,
   findDiffUnchangedActivationAction,
   findDiffUnchangedExpandAction,
+  resolveDiffUnchangedWheelScrollTarget,
   resolveDiffUnchangedViewZoneHeight,
+  shouldHandleDiffUnchangedCenterClick,
+  shouldHandleDiffUnchangedWheel,
   shouldIgnoreDiffUnchangedCenterClickTarget,
 } from '../src/core/diffUnchangedDom'
 
@@ -110,5 +115,115 @@ describe('diffUnchangedDom helpers', () => {
     finally {
       globalThis.HTMLElement = previousHTMLElement
     }
+  })
+
+  it('handles only primary center clicks that are not already on actions', () => {
+    class HTMLElementMock {
+      constructor(private readonly result: unknown) {}
+
+      closest() {
+        return this.result
+      }
+    }
+
+    const previousHTMLElement = globalThis.HTMLElement
+    globalThis.HTMLElement = HTMLElementMock as any
+
+    try {
+      expect(
+        shouldHandleDiffUnchangedCenterClick({
+          button: 0,
+          target: new HTMLElementMock(null) as any,
+        } as any),
+      ).toBe(true)
+      expect(
+        shouldHandleDiffUnchangedCenterClick({
+          button: 1,
+          target: new HTMLElementMock(null) as any,
+        } as any),
+      ).toBe(false)
+      expect(
+        shouldHandleDiffUnchangedCenterClick({
+          button: 0,
+          target: new HTMLElementMock({}) as any,
+        } as any),
+      ).toBe(false)
+    }
+    finally {
+      globalThis.HTMLElement = previousHTMLElement
+    }
+  })
+
+  it('resolves unchanged wheel handling and scroll targets', () => {
+    expect(shouldHandleDiffUnchangedWheel({ deltaX: 0, deltaY: 0.4 } as any)).toBe(false)
+    expect(shouldHandleDiffUnchangedWheel({ deltaX: 0, deltaY: 2 } as any)).toBe(true)
+
+    expect(
+      resolveDiffUnchangedWheelScrollTarget(10, 20, {
+        deltaX: 5,
+        deltaY: 7,
+      } as any),
+    ).toEqual({
+      targetScrollTop: 17,
+      targetScrollLeft: 25,
+      syncHorizontal: true,
+    })
+  })
+
+  it('binds reveal button activation only when a handle exists', () => {
+    const events: string[] = []
+    const button = {
+      onclick: null as null | ((event: any) => void),
+    }
+    const handle = { id: 'top' }
+
+    bindDiffUnchangedRevealButtonAction(
+      button as any,
+      handle as any,
+      (nextHandle) => {
+        events.push((nextHandle as any).id)
+      },
+    )
+
+    button.onclick?.({
+      preventDefault() {
+        events.push('prevent')
+      },
+      stopPropagation() {
+        events.push('stop')
+      },
+    })
+
+    expect(events).toEqual(['prevent', 'stop', 'top'])
+
+    bindDiffUnchangedRevealButtonAction(button as any, null, () => {
+      events.push('unexpected')
+    })
+    expect(button.onclick).toBeNull()
+  })
+
+  it('activates the expand action from a center root when present', () => {
+    const events: string[] = []
+    const root = {
+      querySelector(selector: string) {
+        if (selector !== 'a')
+          return null
+        return {
+          click() {
+            events.push('click')
+          },
+        }
+      },
+    }
+
+    expect(
+      activateDiffUnchangedExpandAction(root as any, () => {
+        events.push('before')
+      }),
+    ).toBe(true)
+    expect(events).toEqual(['before', 'click'])
+    expect(
+      activateDiffUnchangedExpandAction({ querySelector: () => null } as any),
+    ).toBe(false)
   })
 })

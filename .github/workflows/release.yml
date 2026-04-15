@@ -20,16 +20,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: pnpm
           registry-url: https://registry.npmjs.org/
+
+      - run: corepack enable
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm vitest run
+
+      - run: pnpm typecheck
 
       - run: pnpm dlx changelogithub
         env:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
-      # # Uncomment the following lines to publish to npm on CI
-      #
-      # - run: pnpm install
-      # - run: pnpm publish -r --access public
-      #   env:
-      #     NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-      #     NPM_CONFIG_PROVENANCE: true
+      - run: pnpm publish --no-git-checks --access public
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NPM_CONFIG_PROVENANCE: true

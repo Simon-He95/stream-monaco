@@ -1,7 +1,7 @@
 {
   "name": "stream-monaco",
   "type": "module",
-  "version": "0.0.22",
+  "version": "0.0.34",
   "packageManager": "pnpm@10.24.0",
   "description": "A framework-agnostic Monaco Editor integration with Shiki syntax highlighting, built for real-time streaming updates and efficient diff editing.",
   "author": "Simon He",
@@ -35,7 +35,14 @@
     "preact",
     "vanilla"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/index.js",
+    "./dist/index.cjs",
+    "./dist/index.legacy.js",
+    "./dist/index.legacy.cjs",
+    "./legacy.js",
+    "./legacy.cjs"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -74,7 +81,8 @@
     "lint": "eslint . --cache",
     "lint:fix": "pnpm run lint --fix",
     "prepublishOnly": "pnpm build",
-    "release": "bumpp --tag \"stream-monaco@%s\" && npm publish",
+    "release": "bumpp --tag \"v%s\"",
+    "publish:package": "pnpm build && npm publish",
     "start": "esno src/index.ts",
     "bench": "node scripts/stream-benchmark.mjs",
     "bench:playwright": "node scripts/playwright-bench.mjs",

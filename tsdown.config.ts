@@ -6,5 +6,9 @@ export default defineConfig({
   format: ['cjs', 'esm'],
   clean: true,
   dts: true,
-  platform: 'node', // 明确指定为 Node.js 平台
+  // Keep the current Node-oriented transform path for the published build.
+  // The package is consumed in browsers after app bundling, but this setting
+  // keeps the generated CJS/ESM worker URL handling stable; CI validates the
+  // browser-facing paths through the example builds and Playwright smoke test.
+  platform: 'node',
 })

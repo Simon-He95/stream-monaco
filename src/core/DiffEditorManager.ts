@@ -47,6 +47,8 @@ import {
   resolveDiffUnchangedSummaryLabel,
 } from './diffUnchanged'
 import {
+  activateDiffUnchangedExpandAction,
+  bindDiffUnchangedRevealButtonAction,
   clearDiffUnchangedBridgeSourceClasses,
   collectDiffUnchangedViewZoneIds,
   createDiffUnchangedBridgeOverlay,
@@ -58,7 +60,9 @@ import {
   findDiffUnchangedExpandAction,
   resetDiffUnchangedOverlayTransform,
   resolveDiffUnchangedViewZoneHeight,
-  shouldIgnoreDiffUnchangedCenterClickTarget,
+  resolveDiffUnchangedWheelScrollTarget,
+  shouldHandleDiffUnchangedCenterClick,
+  shouldHandleDiffUnchangedWheel,
   syncDiffUnchangedBridgeNode,
   syncDiffUnchangedBridgeVisibility,
   syncDiffUnchangedCenterNode,
@@ -3116,21 +3120,26 @@ export class DiffEditorManager {
     const onWheel = (event: WheelEvent) => {
       if (!this.diffEditorView)
         return
-      if (Math.abs(event.deltaY) < 0.5 && Math.abs(event.deltaX) < 0.5)
+      if (!shouldHandleDiffUnchangedWheel(event))
         return
       event.preventDefault()
       event.stopPropagation()
 
       const originalEditor = this.diffEditorView.getOriginalEditor()
       const modifiedEditor = this.diffEditorView.getModifiedEditor()
-      const targetScrollTop
-        = (modifiedEditor.getScrollTop?.() ?? 0) + event.deltaY
-      const targetScrollLeft
-        = (modifiedEditor.getScrollLeft?.() ?? 0) + event.deltaX
+      const {
+        syncHorizontal,
+        targetScrollLeft,
+        targetScrollTop,
+      } = resolveDiffUnchangedWheelScrollTarget(
+        modifiedEditor.getScrollTop?.() ?? 0,
+        modifiedEditor.getScrollLeft?.() ?? 0,
+        event,
+      )
 
       originalEditor.setScrollTop?.(targetScrollTop)
       modifiedEditor.setScrollTop?.(targetScrollTop)
-      if (Math.abs(event.deltaX) >= 0.5) {
+      if (syncHorizontal) {
         originalEditor.setScrollLeft?.(targetScrollLeft)
         modifiedEditor.setScrollLeft?.(targetScrollLeft)
       }
@@ -3208,15 +3217,15 @@ export class DiffEditorManager {
     const button
       = existingButton ?? createDiffUnchangedRevealButton(direction)
     syncDiffUnchangedRevealButtonNode(button, handle, label)
-    button.onclick = handle
-      ? (event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          this.hideAllDiffUnchangedBridgeEntries()
-          this.activateDiffUnchangedHandle(handle)
-          this.schedulePatchDiffUnchangedRegionsAfterInteraction()
-        }
-      : null
+    bindDiffUnchangedRevealButtonAction(
+      button,
+      handle,
+      (nextHandle) => {
+        this.hideAllDiffUnchangedBridgeEntries()
+        this.activateDiffUnchangedHandle(nextHandle)
+        this.schedulePatchDiffUnchangedRegionsAfterInteraction()
+      },
+    )
     entry[slot] = button
   }
 
@@ -3343,27 +3352,21 @@ export class DiffEditorManager {
         'stream-monaco-focus-within',
       )
 
-      const activate = () => {
-        const action = findDiffUnchangedExpandAction(node)
-        if (action instanceof HTMLElement) {
-          this.capturePreviousDiffUnchangedState()
-          action.click()
-        }
-      }
-
       this.createDomDisposable(
         this.diffUnchangedRegionDisposables,
         node,
         'click',
         (event) => {
           const mouseEvent = event as MouseEvent
-          if (mouseEvent.button !== 0)
-            return
-          if (shouldIgnoreDiffUnchangedCenterClickTarget(event.target))
+          if (!shouldHandleDiffUnchangedCenterClick(mouseEvent))
             return
           event.preventDefault()
           this.hideAllDiffUnchangedBridgeEntries()
-          activate()
+          if (!activateDiffUnchangedExpandAction(node, () => {
+            this.capturePreviousDiffUnchangedState()
+          })) {
+            return
+          }
           this.scheduleCapturePersistedDiffUnchangedState(1)
           this.schedulePatchDiffUnchangedRegionsAfterInteraction()
         },
