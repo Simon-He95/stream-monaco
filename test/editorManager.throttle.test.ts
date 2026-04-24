@@ -22,6 +22,7 @@ async function loadUseMonaco() {
 
   vi.doMock('../src/monaco-shim', () => {
     let lastCreatedModel: any = null
+    let lastCreatedEditor: any = null
 
     class Range {
       constructor(
@@ -137,7 +138,7 @@ async function loadUseMonaco() {
           removeEventListener() {},
         }
 
-        return {
+        const editorApi = {
           getModel() {
             return model
           },
@@ -177,14 +178,16 @@ async function loadUseMonaco() {
           executeEdits(_: string, edits: Array<{ range: Range, text: string }>) {
             model.applyEdits(edits)
           },
-          revealLine() {},
-          revealLineInCenter() {},
-          revealLineInCenterIfOutsideViewport() {},
+          revealLine: vi.fn(),
+          revealLineInCenter: vi.fn(),
+          revealLineInCenterIfOutsideViewport: vi.fn(),
           dispose() {},
           getDomNode() {
             return domNode as any
           },
         }
+        lastCreatedEditor = editorApi
+        return editorApi
       }),
       setTheme: vi.fn(),
       setModelLanguage: vi.fn((model: any, language: string) => {
@@ -206,6 +209,9 @@ async function loadUseMonaco() {
       __getLastModel() {
         return lastCreatedModel
       },
+      __getLastEditor() {
+        return lastCreatedEditor
+      },
     }
   })
 
@@ -214,6 +220,7 @@ async function loadUseMonaco() {
   return {
     ...base,
     __getLastModel: monacoModule.__getLastModel,
+    __getLastEditor: monacoModule.__getLastEditor,
   }
 }
 
@@ -333,6 +340,38 @@ describe('EditorManager update throttling', () => {
     }
 
     expect(monaco.getCode()).toBe(code)
+  })
+
+  it('does not reveal while streamed content is still shorter than the editor height', async () => {
+    const { useMonaco, __getLastEditor } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+    const code = `{
+  ".c": "C",
+  ".cpp": "C++",
+  ".cc": "C++"
+}`
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    const editor = __getLastEditor()
+    for (const line of code.split('\n')) {
+      const next = monaco.getCode()
+        ? `${monaco.getCode()}\n${line}`
+        : line
+      monaco.updateCode(next, 'json')
+      await vi.runAllTimersAsync()
+    }
+
+    expect(editor.revealLine).not.toHaveBeenCalled()
+    expect(editor.revealLineInCenter).not.toHaveBeenCalled()
+    expect(editor.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled()
   })
 
   it('still syncs externally edited content before the next streamed update', async () => {

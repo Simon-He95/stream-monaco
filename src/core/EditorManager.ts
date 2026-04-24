@@ -448,9 +448,10 @@ export class EditorManager {
       this.rafScheduler.schedule('content-size-change', () => {
         try {
           this.dlog('content-size-change frame')
+          this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
+          this.cachedComputedHeight = null
           const m = this.measureViewport()
           this.dlog('content-size-change measure', m)
-          this.cachedLineCount = this.editorView?.getModel()?.getLineCount() ?? this.cachedLineCount
           if (this.editorHeightManager?.isSuppressed()) {
             this.dlog('content-size-change skipped height update (suppressed)')
             return
@@ -514,6 +515,7 @@ export class EditorManager {
     if (model) {
       this.lastKnownCode = model.getValue()
       this.cachedLineCount = model.getLineCount() ?? this.cachedLineCount
+      this.cachedComputedHeight = null
     }
     this.lastKnownCodeDirty = false
   }
@@ -636,6 +638,7 @@ export class EditorManager {
       this.lastKnownCode = newCode
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
+      this.cachedComputedHeight = null
       if (newLineCount !== prevLineCount) {
         // Temporarily suppress the scroll watcher while we run the
         // immediate reveal to avoid the watcher interpreting the layout
@@ -687,6 +690,7 @@ export class EditorManager {
     this.lastKnownCode = newCode
     const newLineCount = model.getLineCount()
     this.cachedLineCount = newLineCount
+    this.cachedComputedHeight = null
     if (newLineCount !== prevLineCount) {
       const shouldImmediate = this.shouldPerformImmediateReveal()
       if (shouldImmediate)
@@ -801,6 +805,7 @@ export class EditorManager {
     const newLineCount = model.getLineCount()
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount
+      this.cachedComputedHeight = null
       const shouldImmediate = this.shouldPerformImmediateReveal()
       if (shouldImmediate)
         this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
