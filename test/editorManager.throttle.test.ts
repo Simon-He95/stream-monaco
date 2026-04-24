@@ -133,6 +133,7 @@ async function loadUseMonaco() {
         const model = createModel(options.value ?? '', options.language ?? 'plaintext')
         lastCreatedModel = model
         const scrollListeners = new Set<(e: any) => void>()
+        let scrollTop = 0
         const domNode = {
           addEventListener() {},
           removeEventListener() {},
@@ -156,9 +157,15 @@ async function loadUseMonaco() {
             return { height: 240 }
           },
           getScrollTop() {
-            return 0
+            return scrollTop
           },
+          setScrollTop: vi.fn((next: number) => {
+            scrollTop = next
+          }),
           getScrollHeight() {
+            return model.getLineCount() * 20
+          },
+          getContentHeight() {
             return model.getLineCount() * 20
           },
           onDidContentSizeChange(listener: () => void) {
@@ -184,6 +191,9 @@ async function loadUseMonaco() {
           dispose() {},
           getDomNode() {
             return domNode as any
+          },
+          __setScrollTop(next: number) {
+            scrollTop = next
           },
         }
         lastCreatedEditor = editorApi
@@ -372,6 +382,75 @@ describe('EditorManager update throttling', () => {
     expect(editor.revealLine).not.toHaveBeenCalled()
     expect(editor.revealLineInCenter).not.toHaveBeenCalled()
     expect(editor.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled()
+  })
+
+  it('uses Monaco content height without forcing a minimum host height', async () => {
+    const { useMonaco } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    expect(container.style.minHeight).toBeUndefined()
+    expect(container.style.height).toBe('20px')
+
+    monaco.updateCode('{\n  "a": 1\n}', 'json')
+    await vi.runAllTimersAsync()
+
+    expect(container.style.height).toBe('60px')
+  })
+
+  it('keeps scroll pinned to top before streamed content reaches max height', async () => {
+    const { useMonaco, __getLastEditor } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    const editor = __getLastEditor()
+    editor.__setScrollTop(8)
+    monaco.updateCode('{\n  "a": 1\n}', 'json')
+    await vi.runAllTimersAsync()
+
+    expect(container.style.height).toBe('60px')
+    expect(container.style.overflow).toBe('hidden')
+    expect(editor.setScrollTop).toHaveBeenCalledWith(0)
+  })
+
+  it('does not fight an external host height within the height hysteresis', async () => {
+    const { useMonaco } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+
+    const container = {
+      style: {},
+      innerHTML: '',
+      getBoundingClientRect: () => ({ height: 41 }),
+    } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    monaco.updateCode('{\n}', 'json')
+    container.style.height = '41px'
+    await vi.runAllTimersAsync()
+
+    expect(container.style.height).toBe('41px')
   })
 
   it('still syncs externally edited content before the next streamed update', async () => {

@@ -189,6 +189,16 @@ export class EditorManager {
   }
 
   private computedHeight(editorView: monaco.editor.IStandaloneCodeEditor) {
+    const contentHeight = editorView.getContentHeight?.()
+    if (
+      typeof contentHeight === 'number'
+      && Number.isFinite(contentHeight)
+      && contentHeight > 0
+    ) {
+      const height = Math.min(contentHeight, this.maxHeightValue)
+      log('EditorManager.computedHeight', { contentHeight, computed: height, maxHeightValue: this.maxHeightValue })
+      return height
+    }
     const lineCount = this.cachedLineCount ?? editorView.getModel()?.getLineCount() ?? 1
     const lineHeight = editorView.getOption(monaco.editor.EditorOption.lineHeight)
     const height = Math.min(lineCount * lineHeight + padding, this.maxHeightValue)
@@ -359,6 +369,37 @@ export class EditorManager {
     return this.autoScrollOnUpdate && this.shouldAutoScroll && this.hasVerticalScrollbar() && this.isOverflowAuto()
   }
 
+  private syncNonOverflowingLayout() {
+    if (!this.editorView || !this.lastContainer)
+      return null
+
+    const computed = this.computedHeight(this.editorView)
+    if (computed >= this.maxHeightValue - 1) {
+      this.lastContainer.style.height = `${this.maxHeightValue}px`
+      return computed
+    }
+
+    const currentHeight
+      = Number.parseFloat(this.lastContainer.style.height || '')
+        || this.lastContainer.getBoundingClientRect?.().height
+        || 0
+    if (currentHeight <= 0 || Math.abs(computed - currentHeight) > 12)
+      this.lastContainer.style.height = `${computed}px`
+    this.lastContainer.style.overflow = 'hidden'
+    this._hasScrollBar = false
+    try {
+      this.editorView.layout?.()
+    }
+    catch {}
+    try {
+      if ((this.editorView.getScrollTop?.() ?? 0) !== 0)
+        this.editorView.setScrollTop?.(0)
+      this.lastScrollTop = 0
+    }
+    catch {}
+    return computed
+  }
+
   async createEditor(
     container: HTMLElement,
     code: string,
@@ -412,17 +453,12 @@ export class EditorManager {
       clearTimeout(this.revealIdleTimerId)
     }
     this.revealIdleTimerId = null
-    // Compute and apply the editor's height (with internal hysteresis to
-    // avoid tiny changes). Provide a small minimum visible height so the
-    // editor doesn't collapse to a single line while content is streaming.
-    const MIN_VISIBLE_HEIGHT = Math.min(120, this.maxHeightValue)
-    // Ensure the container cannot visually collapse below the minimum height
-    // even if height manager misses an update or receives an invalid value.
-    container.style.minHeight = `${MIN_VISIBLE_HEIGHT}px`
+    // Compute and apply the editor's content height. Consumers such as
+    // CodeBlockNode may also sync this same host height from Monaco, so avoid
+    // enforcing a separate minimum that would fight the host.
     this.editorHeightManager = createHeightManager(container, () => {
       const computed = this.computedHeight(this.editorView!)
-      const clamped = Math.min(computed, this.maxHeightValue)
-      return Math.max(clamped, MIN_VISIBLE_HEIGHT)
+      return Math.min(computed, this.maxHeightValue)
     })
     this.editorHeightManager.update()
 
@@ -646,12 +682,9 @@ export class EditorManager {
         const shouldImmediate = this.shouldPerformImmediateReveal()
         if (shouldImmediate)
           this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-        // If we jumped to the max height, apply it immediately so the
-        // scroller appears consistently while content streams.
-        const computed = this.computedHeight(this.editorView)
-        if (computed >= this.maxHeightValue - 1 && this.lastContainer)
-          this.lastContainer.style.height = `${this.maxHeightValue}px`
-        this.forceReveal(newLineCount)
+        const computed = this.syncNonOverflowingLayout()
+        if (computed != null && computed >= this.maxHeightValue - 1)
+          this.forceReveal(newLineCount)
       }
       return
     }
@@ -695,6 +728,7 @@ export class EditorManager {
       const shouldImmediate = this.shouldPerformImmediateReveal()
       if (shouldImmediate)
         this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
+      this.syncNonOverflowingLayout()
       if (shouldImmediate) {
         this.scheduleImmediateRevealAfterLayout(newLineCount)
       }
@@ -746,6 +780,7 @@ export class EditorManager {
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
       if (newLineCount !== prevLineCount) {
+        this.syncNonOverflowingLayout()
         this.maybeScrollToBottom(newLineCount)
       }
       return
@@ -809,12 +844,7 @@ export class EditorManager {
       const shouldImmediate = this.shouldPerformImmediateReveal()
       if (shouldImmediate)
         this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-      // When appends push the computed height to the max, apply the max
-      // immediately so the editor doesn't show an intermediate scrollbar
-      // before the debounced height manager settles.
-      const computed = this.computedHeight(this.editorView)
-      if (computed >= this.maxHeightValue - 1 && this.lastContainer)
-        this.lastContainer.style.height = `${this.maxHeightValue}px`
+      this.syncNonOverflowingLayout()
       if (shouldImmediate) {
         try {
           this.forceReveal(newLineCount)

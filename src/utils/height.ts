@@ -25,6 +25,17 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
       log('heightManager', 'invalid next height, ignoring', next)
       return
     }
+    const currentHeight
+      = Number.parseFloat(container.style.height || '')
+        || container.getBoundingClientRect?.().height
+        || 0
+    if (
+      currentHeight > 0
+      && Math.abs(next - currentHeight) <= HYSTERESIS_PX
+    ) {
+      lastApplied = next
+      return
+    }
     if (lastApplied !== -1 && Math.abs(next - lastApplied) <= HYSTERESIS_PX) {
       return
     }
