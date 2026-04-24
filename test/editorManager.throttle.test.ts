@@ -125,6 +125,9 @@ async function loadUseMonaco() {
         lineHeight: 'lineHeight',
         readOnly: 'readOnly',
       },
+      ScrollType: {
+        Smooth: 'smooth',
+      },
       create: vi.fn((_: any, options: any) => {
         const model = createModel(options.value ?? '', options.language ?? 'plaintext')
         lastCreatedModel = model
@@ -199,6 +202,7 @@ async function loadUseMonaco() {
       editor,
       languages,
       Range,
+      ScrollType: editor.ScrollType,
       __getLastModel() {
         return lastCreatedModel
       },
@@ -303,6 +307,32 @@ describe('EditorManager update throttling', () => {
     await vi.runAllTimersAsync()
     expect(model.__getGetValueCallCount() - beforeSecondUpdate).toBe(0)
     expect(monaco.getCode()).toBe('ab')
+  })
+
+  it('keeps frame-by-frame streaming appends byte-for-byte aligned', async () => {
+    const { useMonaco } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      updateThrottleMs: 0,
+    })
+    const code = `{
+  ".c": "C",
+  ".cpp": "C++",
+  ".cc": "C++"
+}`
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    for (let i = 1; i <= code.length; i++) {
+      monaco.updateCode(code.slice(0, i), 'json')
+      await vi.runAllTimersAsync()
+    }
+
+    expect(monaco.getCode()).toBe(code)
   })
 
   it('still syncs externally edited content before the next streamed update', async () => {

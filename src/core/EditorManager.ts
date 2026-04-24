@@ -679,7 +679,6 @@ export class EditorManager {
       const suffix = newCode.slice(prevCode.length)
       if (suffix)
         this.appendCode(suffix, codeLanguage)
-      this.lastKnownCode = newCode
       return
     }
 

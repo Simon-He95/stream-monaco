@@ -339,6 +339,40 @@ describe('DiffEditorManager inline streaming updates', () => {
     manager.cleanup()
   })
 
+  it('keeps side-by-side diff streaming appends byte-for-byte aligned', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const initial = 'line 1\nline 2\n'
+    const originalTail = `{
+  ".c": "C",
+  ".cpp": "C++"
+}`
+    const modifiedTail = `{
+  ".c": "C",
+  ".cpp": "C++",
+  ".cc": "C++"
+}`
+
+    for (let i = 1; i <= modifiedTail.length; i++) {
+      const expectedOriginal = initial + originalTail.slice(0, Math.min(i, originalTail.length))
+      const expectedModified = initial + modifiedTail.slice(0, i)
+      manager.updateDiff(
+        expectedOriginal,
+        expectedModified,
+        'json',
+      )
+      await waitForAsyncWork()
+      const { original, modified } = manager.getDiffModels()
+      expect(expectedOriginal.startsWith(original.getValue())).toBe(true)
+      expect(expectedModified.startsWith(modified.getValue())).toBe(true)
+    }
+    await new Promise(resolve => setTimeout(resolve, 80))
+
+    const { original, modified } = manager.getDiffModels()
+    expect(original.getValue()).toBe(initial + originalTail)
+    expect(modified.getValue()).toBe(initial + modifiedTail)
+    manager.cleanup()
+  })
+
   it('eagerly grows the diff container before content overflows the inline diff viewport', async () => {
     const manager = await createManager({ renderSideBySide: false })
     const scheduleLayoutSpy = vi.spyOn(

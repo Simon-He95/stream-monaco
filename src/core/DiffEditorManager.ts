@@ -147,6 +147,7 @@ export class DiffEditorManager {
   private cachedLineHeightDiff: number | null = null
   private cachedComputedHeightDiff: number | null = null
   private lastKnownModifiedDirty = false
+  private programmaticModifiedContentChangeDepth = 0
 
   // Read a batch of viewport/layout metrics for modified editor once to avoid repeated DOM reads
   private measureViewportDiff() {
@@ -4767,6 +4768,8 @@ export class DiffEditorManager {
 
     // defer getValue reads for modified model to once-per-frame
     mEditor.onDidChangeModelContent(() => {
+      if (this.programmaticModifiedContentChangeDepth > 0)
+        return
       this.lastKnownModifiedDirty = true
       this.rafScheduler.schedule('sync-last-known-modified', () =>
         this.syncLastKnownModified())
@@ -5498,7 +5501,9 @@ export class DiffEditorManager {
           lastColumn,
         )
         this.preserveNativeDiffDecorationsOnStaleAppend = true
-        model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
+        this.runAsProgrammaticModifiedContentChange(() => {
+          model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
+        })
         // update lastKnownModifiedCode lazily based on model value to avoid drift
         this.lastKnownModifiedCode = model.getValue()
         const newLine = model.getLineCount()
@@ -5550,7 +5555,9 @@ export class DiffEditorManager {
     const lastColumn = model.getLineMaxColumn(prevLine)
     const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
     this.preserveNativeDiffDecorationsOnStaleAppend = true
-    model.applyEdits([{ range, text, forceMoveMarkers: true }])
+    this.runAsProgrammaticModifiedContentChange(() => {
+      model.applyEdits([{ range, text, forceMoveMarkers: true }])
+    })
     // update lastKnownModifiedCode lazily based on model value to avoid drift
     this.lastKnownModifiedCode = model.getValue()
 
@@ -5604,7 +5611,9 @@ export class DiffEditorManager {
     const changeRatio
       = maxLen > 0 ? Math.abs(next.length - prev.length) / maxLen : 0
     if (prev.length + next.length > maxChars || changeRatio > ratio) {
-      model.setValue(next)
+      this.applyModelEdit(model, () => {
+        model.setValue(next)
+      })
       if (model === this.modifiedModel) {
         this.lastKnownModifiedLineCount = model.getLineCount()
       }
@@ -5623,7 +5632,9 @@ export class DiffEditorManager {
       rangeEnd.lineNumber,
       rangeEnd.column,
     )
-    model.applyEdits([{ range, text: replaceText, forceMoveMarkers: true }])
+    this.applyModelEdit(model, () => {
+      model.applyEdits([{ range, text: replaceText, forceMoveMarkers: true }])
+    })
     if (model === this.modifiedModel) {
       this.lastKnownModifiedLineCount = model.getLineCount()
     }
@@ -5635,9 +5646,29 @@ export class DiffEditorManager {
     const lastLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
-    model.applyEdits([{ range, text: appendText, forceMoveMarkers: true }])
+    this.applyModelEdit(model, () => {
+      model.applyEdits([{ range, text: appendText, forceMoveMarkers: true }])
+    })
     if (model === this.modifiedModel) {
       this.lastKnownModifiedLineCount = model.getLineCount()
+    }
+  }
+
+  private applyModelEdit(model: monaco.editor.ITextModel, fn: () => void) {
+    if (model === this.modifiedModel) {
+      this.runAsProgrammaticModifiedContentChange(fn)
+      return
+    }
+    fn()
+  }
+
+  private runAsProgrammaticModifiedContentChange(fn: () => void) {
+    this.programmaticModifiedContentChangeDepth += 1
+    try {
+      fn()
+    }
+    finally {
+      this.programmaticModifiedContentChangeDepth -= 1
     }
   }
 }
