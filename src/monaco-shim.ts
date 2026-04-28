@@ -13,6 +13,11 @@ import * as _monaco from 'monaco-editor/esm/vs/editor/editor.api'
 // so existing imports like `import * as monaco from '.../monaco-shim'` keep
 // the `monaco.editor` typing available.
 const monaco: typeof _monaco = _monaco as any
+const monacoAny = monaco as any
+
+for (const name of ['css', 'html', 'json', 'typescript']) {
+  monacoAny.languages[name] ??= monacoAny[name]
+}
 
 export const ScrollType
   = Reflect.get(_monaco as object, 'ScrollType') ?? (_monaco as any).editor?.ScrollType

@@ -102,7 +102,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "monaco-editor": "^0.52.2"
+    "monaco-editor": ">=0.52.2 <0.56.0"
   },
   "dependencies": {
     "@shikijs/monaco": "^3.23.0",
