@@ -2734,6 +2734,8 @@ export class DiffEditorManager {
     if (!this.diffEditorView)
       return
 
+    this.flushPendingDiffContentSync()
+
     const hideUnchangedRegions = this.resolveDiffHideUnchangedRegionsOption()
     const shouldRecomputeDiffViewModelForUnchangedRegions
       = !this.diffHideUnchangedRegionsDeferred
@@ -5384,6 +5386,13 @@ export class DiffEditorManager {
         }
       }
     }
+  }
+
+  private flushPendingDiffContentSync() {
+    this.rafScheduler.cancel('diff')
+    this.flushPendingDiffUpdate()
+    this.flushOriginalAppendBufferSync()
+    this.flushModifiedAppendBufferSync()
   }
 
   private flushModifiedAppendBufferSync() {

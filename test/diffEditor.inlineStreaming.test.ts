@@ -373,6 +373,42 @@ describe('DiffEditorManager inline streaming updates', () => {
     manager.cleanup()
   })
 
+  it('flushes pending replacement updates before refreshing diff presentation', async () => {
+    const manager = await createManager({ renderSideBySide: false })
+    ;(manager as any).lastContainer.style.removeProperty = vi.fn()
+
+    manager.updateDiff(
+      'line 1\nold value\n',
+      'line 1\nnew value\n',
+      'typescript',
+    )
+
+    ;(manager as any).refreshDiffPresentation()
+
+    const { original, modified } = manager.getDiffModels()
+    expect(original.getValue()).toBe('line 1\nold value\n')
+    expect(modified.getValue()).toBe('line 1\nnew value\n')
+    manager.cleanup()
+  })
+
+  it('flushes buffered tail appends before refreshing diff presentation', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    ;(manager as any).lastContainer.style.removeProperty = vi.fn()
+
+    manager.updateDiff(
+      'line 1\nline 2\nold value\n',
+      'line 1\nline 2\nnew value\n',
+      'typescript',
+    )
+
+    ;(manager as any).refreshDiffPresentation()
+
+    const { original, modified } = manager.getDiffModels()
+    expect(original.getValue()).toBe('line 1\nline 2\nold value\n')
+    expect(modified.getValue()).toBe('line 1\nline 2\nnew value\n')
+    manager.cleanup()
+  })
+
   it('eagerly grows the diff container before content overflows the inline diff viewport', async () => {
     const manager = await createManager({ renderSideBySide: false })
     const scheduleLayoutSpy = vi.spyOn(
