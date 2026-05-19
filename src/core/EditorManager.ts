@@ -398,6 +398,34 @@ export class EditorManager {
     return this.autoScrollOnUpdate && this.shouldAutoScroll
   }
 
+  private getRevealSuppressionMs() {
+    const transitionMs = this.editorHeightManager?.getTransitionMs?.() ?? 0
+    return Math.max(this.scrollWatcherSuppressionMs, transitionMs + 100)
+  }
+
+  private syncHeightAndRevealAfterContentChange(targetLine?: number) {
+    const shouldReveal = this.shouldRevealAfterLayout()
+    const willReveal = !!(
+      shouldReveal
+      && this.editorView
+      && this.computedHeight(this.editorView) >= this.maxHeightValue - 1
+    )
+    if (willReveal)
+      this.suppressScrollWatcher(this.getRevealSuppressionMs())
+    const computed = this.syncNonOverflowingLayout()
+    if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
+      const line = targetLine ?? this.editorView?.getModel()?.getLineCount() ?? 1
+      if (this.isSmoothHeightTransitionEnabled())
+        this.scheduleImmediateRevealAfterLayout(line)
+      else
+        this.forceReveal(line)
+    }
+    else if (!shouldReveal && targetLine != null) {
+      this.maybeScrollToBottom(targetLine)
+    }
+    return computed
+  }
+
   private syncNonOverflowingLayout() {
     if (!this.editorView || !this.lastContainer)
       return null
@@ -526,20 +554,8 @@ export class EditorManager {
             this.dlog('content-size-change skipped height update (suppressed)')
             return
           }
-          this.dlog('content-size-change calling heightManager.update')
-          this.editorHeightManager?.update()
-          // Toggle overflow based on whether we've effectively reached max height.
-          const computed = this.computedHeight(this.editorView!)
-          if (this.lastContainer) {
-            const overflow = this.setOverflowForHeight(computed)
-            if (overflow?.changed) {
-              // If we just switched to visible overflow and auto-scroll is on,
-              // schedule a scroll to bottom so the user sees the latest content.
-              if (overflow.next === 'auto' && this.shouldAutoScroll) {
-                this.maybeScrollToBottom()
-              }
-            }
-          }
+          this.dlog('content-size-change syncing height/reveal')
+          this.syncHeightAndRevealAfterContentChange()
         }
         catch (err) { error('EditorManager', 'content-size-change error', err) }
       })
@@ -629,6 +645,11 @@ export class EditorManager {
           await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())))
         }
         this.dlog('running delayed immediate reveal', 'ticket=', ticket, 'line=', line)
+        if (ticket !== this.revealTicket) {
+          this.dlog('delayed immediate reveal skipped, stale ticket', ticket, 'current', this.revealTicket)
+          return
+        }
+        this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
         this.performImmediateReveal(line, ticket)
       }
       catch (err) { error('EditorManager', 'scheduleImmediateRevealAfterLayout error', err) }
@@ -721,19 +742,7 @@ export class EditorManager {
       this.cachedLineCount = newLineCount
       this.cachedComputedHeight = null
       if (newLineCount !== prevLineCount) {
-        // Temporarily suppress the scroll watcher while we run the
-        // immediate reveal to avoid the watcher interpreting the layout
-        // driven scroll as user input and toggling auto-scroll state.
-        const shouldReveal = this.shouldRevealAfterLayout()
-        if (shouldReveal)
-          this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-        const computed = this.syncNonOverflowingLayout()
-        if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
-          if (this.isSmoothHeightTransitionEnabled())
-            this.scheduleImmediateRevealAfterLayout(newLineCount)
-          else
-            this.forceReveal(newLineCount)
-        }
+        this.syncHeightAndRevealAfterContentChange(newLineCount)
       }
       return
     }
@@ -774,19 +783,7 @@ export class EditorManager {
     this.cachedLineCount = newLineCount
     this.cachedComputedHeight = null
     if (newLineCount !== prevLineCount) {
-      const shouldReveal = this.shouldRevealAfterLayout()
-      if (shouldReveal)
-        this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-      const computed = this.syncNonOverflowingLayout()
-      if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
-        if (this.isSmoothHeightTransitionEnabled())
-          this.scheduleImmediateRevealAfterLayout(newLineCount)
-        else
-          this.forceReveal(newLineCount)
-      }
-      else if (!shouldReveal) {
-        this.maybeScrollToBottom(newLineCount)
-      }
+      this.syncHeightAndRevealAfterContentChange(newLineCount)
     }
   }
 
@@ -832,19 +829,7 @@ export class EditorManager {
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
       if (newLineCount !== prevLineCount) {
-        const shouldReveal = this.shouldRevealAfterLayout()
-        if (shouldReveal)
-          this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-        const computed = this.syncNonOverflowingLayout()
-        if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
-          if (this.isSmoothHeightTransitionEnabled())
-            this.scheduleImmediateRevealAfterLayout(newLineCount)
-          else
-            this.forceReveal(newLineCount)
-        }
-        else if (!shouldReveal) {
-          this.maybeScrollToBottom(newLineCount)
-        }
+        this.syncHeightAndRevealAfterContentChange(newLineCount)
       }
       return
     }
@@ -904,19 +889,7 @@ export class EditorManager {
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount
       this.cachedComputedHeight = null
-      const shouldReveal = this.shouldRevealAfterLayout()
-      if (shouldReveal)
-        this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-      const computed = this.syncNonOverflowingLayout()
-      if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
-        if (this.isSmoothHeightTransitionEnabled())
-          this.scheduleImmediateRevealAfterLayout(newLineCount)
-        else
-          this.forceReveal(newLineCount)
-      }
-      else if (!shouldReveal) {
-        this.maybeScrollToBottom(newLineCount)
-      }
+      this.syncHeightAndRevealAfterContentChange(newLineCount)
     }
   }
 

@@ -225,6 +225,18 @@ describe('EditorManager cleanup semantics', () => {
     expect(manager['lastContainer']?.style.overflow).toBe('auto')
   })
 
+  it('extends reveal watcher suppression to cover smooth height transitions', () => {
+    const manager = createEditorManager({
+      smoothHeightTransition: true,
+      heightTransitionMs: 800,
+    })
+    manager['editorHeightManager'] = {
+      getTransitionMs: () => 800,
+    } as any
+
+    expect((manager as any).getRevealSuppressionMs()).toBe(900)
+  })
+
   it('invalidates an in-flight immediate reveal during cleanup', async () => {
     const manager = createEditorManager({ smoothHeightTransition: true })
     let resolveWait: () => void = () => {}

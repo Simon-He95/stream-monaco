@@ -109,3 +109,6 @@ jobs:
 
       - name: Diff smoke
         run: pnpm smoke:diff
+
+      - name: Height stability smoke
+        run: pnpm smoke:height-stability

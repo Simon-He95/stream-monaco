@@ -9,6 +9,11 @@ function installRafMocks() {
   })
 }
 
+async function flushRafFrames(count: number) {
+  for (let i = 0; i < count; i++)
+    await vi.advanceTimersByTimeAsync(1)
+}
+
 async function loadUseMonaco() {
   vi.resetModules()
 
@@ -134,6 +139,7 @@ async function loadUseMonaco() {
         lastCreatedModel = model
         const scrollListeners = new Set<(e: any) => void>()
         let scrollTop = 0
+        let contentHeightOverride: number | null = null
         const domNode = {
           addEventListener() {},
           removeEventListener() {},
@@ -163,10 +169,10 @@ async function loadUseMonaco() {
             scrollTop = next
           }),
           getScrollHeight() {
-            return model.getLineCount() * 20
+            return contentHeightOverride ?? model.getLineCount() * 20
           },
           getContentHeight() {
-            return model.getLineCount() * 20
+            return contentHeightOverride ?? model.getLineCount() * 20
           },
           onDidContentSizeChange(listener: () => void) {
             return model.onDidContentSizeChange(listener)
@@ -194,6 +200,9 @@ async function loadUseMonaco() {
           },
           __setScrollTop(next: number) {
             scrollTop = next
+          },
+          __setContentHeight(next: number) {
+            contentHeightOverride = next
           },
         }
         lastCreatedEditor = editorApi
@@ -382,6 +391,42 @@ describe('EditorManager update throttling', () => {
     expect(editor.revealLine).not.toHaveBeenCalled()
     expect(editor.revealLineInCenter).not.toHaveBeenCalled()
     expect(editor.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled()
+  })
+
+  it('delays wrapped single-line reveal until smooth height transition settles', async () => {
+    const { useMonaco, __getLastEditor } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['markdown'],
+      readOnly: true,
+      wordWrap: 'on',
+      MAX_HEIGHT: 60,
+      smoothHeightTransition: true,
+      heightTransitionMs: 800,
+      updateThrottleMs: 0,
+      revealBatchOnIdleMs: 0,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, 'short', 'markdown')
+    await vi.runAllTimersAsync()
+
+    const editor = __getLastEditor()
+    editor.__setContentHeight(80)
+    monaco.updateCode('short '.padEnd(120, 'x'), 'markdown')
+    await flushRafFrames(8)
+
+    expect(editor.getModel().getLineCount()).toBe(1)
+    expect(container.style.height).toBe('60px')
+    expect(container.style.overflow).toBe('auto')
+    expect(editor.revealLine).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(700)
+    expect(editor.revealLine).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.resolve()
+    expect(editor.revealLine).toHaveBeenCalledWith(1)
   })
 
   it('uses Monaco content height without forcing a minimum host height', async () => {
