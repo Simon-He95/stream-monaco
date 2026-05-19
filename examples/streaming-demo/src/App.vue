@@ -4,6 +4,7 @@
       <router-link to="/">Streaming Demo</router-link>
       <router-link to="/diff">Diff Editor Demo</router-link>
       <router-link to="/diff-ux">Diff UX Demo</router-link>
+      <router-link to="/height-stability">Height Stability Demo</router-link>
     </nav>
     <main style="padding:12px">
       <router-view />

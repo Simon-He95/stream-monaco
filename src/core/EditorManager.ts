@@ -8,6 +8,13 @@ import { error, log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 
+const defaultHeightTransitionMs = 120
+const defaultHeightTransitionEasing = 'cubic-bezier(0.4, 0, 0.2, 1)'
+const smoothHeightTolerancePx = 1
+const legacyHeightTolerancePx = 12
+const smoothHeightDebounceMs = 16
+const legacyHeightDebounceMs = 0
+
 export class EditorManager {
   private editorView: monaco.editor.IStandaloneCodeEditor | null = null
   private lastContainer: HTMLElement | null = null
@@ -176,6 +183,39 @@ export class EditorManager {
     return this._hasScrollBar = (m.scrollHeight > m.computedHeight + padding / 2)
   }
 
+  private isSmoothHeightTransitionEnabled() {
+    return this.options.smoothHeightTransition ?? false
+  }
+
+  private getHeightChangeTolerancePx() {
+    return this.options.heightChangeTolerancePx
+      ?? (this.isSmoothHeightTransitionEnabled() ? smoothHeightTolerancePx : legacyHeightTolerancePx)
+  }
+
+  private getHeightManagerOptions() {
+    const smooth = this.isSmoothHeightTransitionEnabled()
+    return {
+      smooth,
+      transitionMs: this.options.heightTransitionMs ?? defaultHeightTransitionMs,
+      transitionEasing: this.options.heightTransitionEasing ?? defaultHeightTransitionEasing,
+      debounceMs: this.options.heightUpdateDebounceMs
+        ?? (smooth ? smoothHeightDebounceMs : legacyHeightDebounceMs),
+      hysteresisPx: this.getHeightChangeTolerancePx(),
+    }
+  }
+
+  private setOverflowForHeight(computed: number) {
+    if (!this.lastContainer)
+      return null
+    const next = computed >= this.maxHeightValue - 1 ? 'auto' : 'hidden'
+    const prev = this.lastContainer.style.overflow
+    if (prev !== next)
+      this.lastContainer.style.overflow = next
+    if (next === 'hidden')
+      this._hasScrollBar = false
+    return { prev, next, changed: prev !== next }
+  }
+
   private userIsNearBottom(): boolean {
     if (!this.editorView)
       return true
@@ -330,9 +370,6 @@ export class EditorManager {
     catch { }
   }
 
-  // Force an immediate (synchronous) reveal of a line, bypassing the
-  // ticketing/debounce mechanism. Used when we explicitly applied the
-  // container to the max height and need the scroll to follow immediately.
   private forceReveal(line: number) {
     try {
       if (!this.editorView)
@@ -348,9 +385,6 @@ export class EditorManager {
       this.measureViewport()
     }
     catch { }
-    // After forcing a reveal, ensure auto-scroll state is on and the
-    // lastScrollTop is synchronized so the scrollWatcher doesn't treat
-    // this programmatic scroll as user input.
     try {
       this.shouldAutoScroll = true
       this.lastScrollTop = this.editorView?.getScrollTop?.() ?? this.lastScrollTop
@@ -358,15 +392,8 @@ export class EditorManager {
     catch { }
   }
 
-  private isOverflowAuto() {
-    try {
-      return !!this.lastContainer && this.lastContainer.style.overflow === 'auto'
-    }
-    catch { return false }
-  }
-
-  private shouldPerformImmediateReveal() {
-    return this.autoScrollOnUpdate && this.shouldAutoScroll && this.hasVerticalScrollbar() && this.isOverflowAuto()
+  private shouldRevealAfterLayout() {
+    return this.autoScrollOnUpdate && this.shouldAutoScroll
   }
 
   private syncNonOverflowingLayout() {
@@ -374,18 +401,12 @@ export class EditorManager {
       return null
 
     const computed = this.computedHeight(this.editorView)
+    this.editorHeightManager?.updateNow()
+    this.setOverflowForHeight(computed)
     if (computed >= this.maxHeightValue - 1) {
-      this.lastContainer.style.height = `${this.maxHeightValue}px`
       return computed
     }
 
-    const currentHeight
-      = Number.parseFloat(this.lastContainer.style.height || '')
-        || this.lastContainer.getBoundingClientRect?.().height
-        || 0
-    if (currentHeight <= 0 || Math.abs(computed - currentHeight) > 12)
-      this.lastContainer.style.height = `${computed}px`
-    this.lastContainer.style.overflow = 'hidden'
     this._hasScrollBar = false
     try {
       this.editorView.layout?.()
@@ -416,6 +437,8 @@ export class EditorManager {
     // editor reaches its configured max height. We'll toggle to `auto`
     // when the computed height reaches `maxHeightValue`.
     container.style.overflow = 'hidden'
+    if (this.isSmoothHeightTransitionEnabled())
+      container.style.scrollbarGutter = 'stable'
     container.style.maxHeight = this.maxHeightCSS
 
     this.editorView = monaco.editor.create(container, {
@@ -459,18 +482,10 @@ export class EditorManager {
     this.editorHeightManager = createHeightManager(container, () => {
       const computed = this.computedHeight(this.editorView!)
       return Math.min(computed, this.maxHeightValue)
-    })
-    this.editorHeightManager.update()
-
-    // If the initial computed height already reaches (or is very near) the
-    // configured max height, apply it immediately so the UI shows the
-    // scrolled state without waiting for the debounced height manager.
-    const initialComputed = this.computedHeight(this.editorView)
-    if (initialComputed >= this.maxHeightValue - 1) {
-      container.style.height = `${this.maxHeightValue}px`
-      container.style.overflow = 'auto'
-      this.dlog('applied immediate maxHeight on createEditor', this.maxHeightValue)
-    }
+    }, this.getHeightManagerOptions())
+    const initialComputed = this.editorHeightManager.updateNow()
+    if (initialComputed != null)
+      this.setOverflowForHeight(initialComputed)
 
     this.cachedScrollHeight = this.editorView.getScrollHeight?.() ?? null
     this.cachedLineHeight = this.editorView.getOption?.(monaco.editor.EditorOption.lineHeight) ?? null
@@ -497,13 +512,11 @@ export class EditorManager {
           // Toggle overflow based on whether we've effectively reached max height.
           const computed = this.computedHeight(this.editorView!)
           if (this.lastContainer) {
-            const prevOverflow = this.lastContainer.style.overflow
-            const newOverflow = computed >= this.maxHeightValue - 1 ? 'auto' : 'hidden'
-            if (prevOverflow !== newOverflow) {
-              this.lastContainer.style.overflow = newOverflow
+            const overflow = this.setOverflowForHeight(computed)
+            if (overflow?.changed) {
               // If we just switched to visible overflow and auto-scroll is on,
               // schedule a scroll to bottom so the user sees the latest content.
-              if (newOverflow === 'auto' && this.shouldAutoScroll) {
+              if (overflow.next === 'auto' && this.shouldAutoScroll) {
                 this.maybeScrollToBottom()
               }
             }
@@ -606,18 +619,31 @@ export class EditorManager {
   private waitForHeightApplied(target: number, timeoutMs = 500) {
     return new Promise<void>((resolve) => {
       const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+      const tolerance = this.getHeightChangeTolerancePx()
+      const transitionMs = this.editorHeightManager?.getTransitionMs?.() ?? 0
+      let settled = false
+      const resolveAfterSettle = () => {
+        if (settled)
+          return
+        settled = true
+        if (transitionMs > 0) {
+          setTimeout(resolve, transitionMs)
+          return
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      }
       const check = () => {
         try {
           const last = this.editorHeightManager?.getLastApplied?.() ?? -1
-          if (last !== -1 && Math.abs(last - target) <= 12) {
+          if (last !== -1 && Math.abs(last - target) <= tolerance) {
             this.dlog('waitForHeightApplied satisfied', last, 'target=', target)
-            resolve()
+            resolveAfterSettle()
             return
           }
           const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
           if (now - start > timeoutMs) {
             log('EditorManager', 'waitForHeightApplied timeout', last, 'target=', target)
-            resolve()
+            resolveAfterSettle()
             return
           }
         }
@@ -679,12 +705,16 @@ export class EditorManager {
         // Temporarily suppress the scroll watcher while we run the
         // immediate reveal to avoid the watcher interpreting the layout
         // driven scroll as user input and toggling auto-scroll state.
-        const shouldImmediate = this.shouldPerformImmediateReveal()
-        if (shouldImmediate)
+        const shouldReveal = this.shouldRevealAfterLayout()
+        if (shouldReveal)
           this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
         const computed = this.syncNonOverflowingLayout()
-        if (computed != null && computed >= this.maxHeightValue - 1)
-          this.forceReveal(newLineCount)
+        if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
+          if (this.isSmoothHeightTransitionEnabled())
+            this.scheduleImmediateRevealAfterLayout(newLineCount)
+          else
+            this.forceReveal(newLineCount)
+        }
       }
       return
     }
@@ -725,14 +755,17 @@ export class EditorManager {
     this.cachedLineCount = newLineCount
     this.cachedComputedHeight = null
     if (newLineCount !== prevLineCount) {
-      const shouldImmediate = this.shouldPerformImmediateReveal()
-      if (shouldImmediate)
+      const shouldReveal = this.shouldRevealAfterLayout()
+      if (shouldReveal)
         this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-      this.syncNonOverflowingLayout()
-      if (shouldImmediate) {
-        this.scheduleImmediateRevealAfterLayout(newLineCount)
+      const computed = this.syncNonOverflowingLayout()
+      if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
+        if (this.isSmoothHeightTransitionEnabled())
+          this.scheduleImmediateRevealAfterLayout(newLineCount)
+        else
+          this.forceReveal(newLineCount)
       }
-      else {
+      else if (!shouldReveal) {
         this.maybeScrollToBottom(newLineCount)
       }
     }
@@ -780,8 +813,19 @@ export class EditorManager {
       const newLineCount = model.getLineCount()
       this.cachedLineCount = newLineCount
       if (newLineCount !== prevLineCount) {
-        this.syncNonOverflowingLayout()
-        this.maybeScrollToBottom(newLineCount)
+        const shouldReveal = this.shouldRevealAfterLayout()
+        if (shouldReveal)
+          this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
+        const computed = this.syncNonOverflowingLayout()
+        if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
+          if (this.isSmoothHeightTransitionEnabled())
+            this.scheduleImmediateRevealAfterLayout(newLineCount)
+          else
+            this.forceReveal(newLineCount)
+        }
+        else if (!shouldReveal) {
+          this.maybeScrollToBottom(newLineCount)
+        }
       }
       return
     }
@@ -841,17 +885,17 @@ export class EditorManager {
     if (lastLine !== newLineCount) {
       this.cachedLineCount = newLineCount
       this.cachedComputedHeight = null
-      const shouldImmediate = this.shouldPerformImmediateReveal()
-      if (shouldImmediate)
+      const shouldReveal = this.shouldRevealAfterLayout()
+      if (shouldReveal)
         this.suppressScrollWatcher(this.scrollWatcherSuppressionMs)
-      this.syncNonOverflowingLayout()
-      if (shouldImmediate) {
-        try {
+      const computed = this.syncNonOverflowingLayout()
+      if (computed != null && computed >= this.maxHeightValue - 1 && shouldReveal) {
+        if (this.isSmoothHeightTransitionEnabled())
+          this.scheduleImmediateRevealAfterLayout(newLineCount)
+        else
           this.forceReveal(newLineCount)
-        }
-        catch { }
       }
-      else {
+      else if (!shouldReveal) {
         this.maybeScrollToBottom(newLineCount)
       }
     }

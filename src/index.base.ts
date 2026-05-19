@@ -47,7 +47,7 @@ let globalAppliedThemeName: string | null = null
  * @param {MonacoLanguage[]} [monacoOptions.languages] - 支持的编程语言数组
  * @param {string} [monacoOptions.theme] - 初始主题名称
  * @param {boolean} [monacoOptions.isCleanOnBeforeCreate] - 是否在创建前清理之前注册的资源, 默认为 true
- * @param {(monaco: typeof import('monaco-editor')) => monaco.IDisposable[]} [monacoOptions.onBeforeCreate] - 编辑器创建前的钩子函数
+ * @param {(monaco: typeof import('monaco-editor/esm/vs/editor/editor.api')) => monaco.IDisposable[]} [monacoOptions.onBeforeCreate] - 编辑器创建前的钩子函数
  *
  * @returns {{
  *   createEditor: (container: HTMLElement, code: string, language: string) => Promise<monaco.editor.IStandaloneCodeEditor>,

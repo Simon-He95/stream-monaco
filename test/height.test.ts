@@ -28,4 +28,26 @@ describe('createHeightManager', () => {
     expect(container.style.height).not.toBe('')
     m.dispose()
   })
+
+  it('does not add a height transition by default', () => {
+    const container = { style: { height: '', transition: '' } } as unknown as HTMLElement
+    const m = createHeightManager(container, () => 100)
+
+    expect(container.style.transition).toBe('')
+
+    m.dispose()
+  })
+
+  it('adds a height transition when smooth height is enabled', () => {
+    const container = { style: { height: '', transition: '' } } as unknown as HTMLElement
+    const m = createHeightManager(container, () => 100, {
+      smooth: true,
+      transitionMs: 120,
+      transitionEasing: 'linear',
+    })
+
+    expect(container.style.transition).toBe('height 120ms linear')
+
+    m.dispose()
+  })
 })
