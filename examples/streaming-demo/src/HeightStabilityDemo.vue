@@ -42,61 +42,44 @@ interface RuntimeMetrics {
 
 const baselineEl = ref<HTMLElement | null>(null)
 const smoothEl = ref<HTMLElement | null>(null)
+const constrainedBaselineEl = ref<HTMLElement | null>(null)
+const constrainedSmoothEl = ref<HTMLElement | null>(null)
 const running = ref(false)
-const baselineMetrics = reactive<HeightMetrics>({
-  current: 0,
-  maxDelta: 0,
-  largeJumps: 0,
-  changes: 0,
-  lastHeight: 0,
-  styleHeight: '',
-  rectHeight: 0,
-  clientHeight: 0,
-  offsetHeight: 0,
-  scrollHeight: 0,
-  maxHeight: '',
-  overflowY: '',
-  hasScrollbar: false,
-  scrollbarWidth: 0,
-  transition: '',
-  monacoContentHeight: 0,
-  monacoScrollHeight: 0,
-  monacoScrollTop: 0,
-  monacoLayoutHeight: 0,
-  monacoHasScrollbar: false,
-  lineCount: 0,
-  updateCalls: 0,
-  updateTotalMs: 0,
-  updateMaxMs: 0,
-  slowUpdates: 0,
-})
-const smoothMetrics = reactive<HeightMetrics>({
-  current: 0,
-  maxDelta: 0,
-  largeJumps: 0,
-  changes: 0,
-  lastHeight: 0,
-  styleHeight: '',
-  rectHeight: 0,
-  clientHeight: 0,
-  offsetHeight: 0,
-  scrollHeight: 0,
-  maxHeight: '',
-  overflowY: '',
-  hasScrollbar: false,
-  scrollbarWidth: 0,
-  transition: '',
-  monacoContentHeight: 0,
-  monacoScrollHeight: 0,
-  monacoScrollTop: 0,
-  monacoLayoutHeight: 0,
-  monacoHasScrollbar: false,
-  lineCount: 0,
-  updateCalls: 0,
-  updateTotalMs: 0,
-  updateMaxMs: 0,
-  slowUpdates: 0,
-})
+
+function createHeightMetrics() {
+  return reactive<HeightMetrics>({
+    current: 0,
+    maxDelta: 0,
+    largeJumps: 0,
+    changes: 0,
+    lastHeight: 0,
+    styleHeight: '',
+    rectHeight: 0,
+    clientHeight: 0,
+    offsetHeight: 0,
+    scrollHeight: 0,
+    maxHeight: '',
+    overflowY: '',
+    hasScrollbar: false,
+    scrollbarWidth: 0,
+    transition: '',
+    monacoContentHeight: 0,
+    monacoScrollHeight: 0,
+    monacoScrollTop: 0,
+    monacoLayoutHeight: 0,
+    monacoHasScrollbar: false,
+    lineCount: 0,
+    updateCalls: 0,
+    updateTotalMs: 0,
+    updateMaxMs: 0,
+    slowUpdates: 0,
+  })
+}
+
+const baselineMetrics = createHeightMetrics()
+const smoothMetrics = createHeightMetrics()
+const constrainedBaselineMetrics = createHeightMetrics()
+const constrainedSmoothMetrics = createHeightMetrics()
 const runtimeMetrics = reactive<RuntimeMetrics>({
   streamMs: 0,
   frames: 0,
@@ -113,16 +96,27 @@ const commonOptions = {
   themes: ['vitesse-dark', 'vitesse-light'],
   languages: ['markdown', 'typescript', 'shellscript'],
   readOnly: true,
-  MAX_HEIGHT: 420,
   updateThrottleMs: 0,
 }
 
 const baselineEditor = useMonaco({
   ...commonOptions,
+  MAX_HEIGHT: 420,
   smoothHeightTransition: false,
 })
 const smoothEditor = useMonaco({
   ...commonOptions,
+  MAX_HEIGHT: 420,
+  smoothHeightTransition: true,
+})
+const constrainedBaselineEditor = useMonaco({
+  ...commonOptions,
+  MAX_HEIGHT: 180,
+  smoothHeightTransition: false,
+})
+const constrainedSmoothEditor = useMonaco({
+  ...commonOptions,
+  MAX_HEIGHT: 180,
   smoothHeightTransition: true,
 })
 
@@ -327,6 +321,10 @@ function refreshSamples() {
     sampleContainer(baselineEl.value, baselineMetrics, baselineEditor)
   if (smoothEl.value)
     sampleContainer(smoothEl.value, smoothMetrics, smoothEditor)
+  if (constrainedBaselineEl.value)
+    sampleContainer(constrainedBaselineEl.value, constrainedBaselineMetrics, constrainedBaselineEditor)
+  if (constrainedSmoothEl.value)
+    sampleContainer(constrainedSmoothEl.value, constrainedSmoothMetrics, constrainedSmoothEditor)
 }
 
 function buildReport() {
@@ -348,6 +346,14 @@ function buildReport() {
     smooth: {
       ...smoothMetrics,
       updateAverageMs: updateAverage(smoothMetrics),
+    },
+    constrainedBaseline: {
+      ...constrainedBaselineMetrics,
+      updateAverageMs: updateAverage(constrainedBaselineMetrics),
+    },
+    constrainedSmooth: {
+      ...constrainedSmoothMetrics,
+      updateAverageMs: updateAverage(constrainedSmoothMetrics),
     },
   }
 }
@@ -391,10 +397,14 @@ function startStream() {
   resetRuntimeMetrics()
   recordUpdate(baselineMetrics, () => baselineEditor.updateCode('', 'markdown'))
   recordUpdate(smoothMetrics, () => smoothEditor.updateCode('', 'markdown'))
+  recordUpdate(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode('', 'markdown'))
+  recordUpdate(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode('', 'markdown'))
   startTimer = setTimeout(() => {
     startTimer = null
     resetMetrics(baselineMetrics)
     resetMetrics(smoothMetrics)
+    resetMetrics(constrainedBaselineMetrics)
+    resetMetrics(constrainedSmoothMetrics)
     resetRuntimeMetrics()
     streamStartedAt = performance.now()
     startFrameSampler()
@@ -403,6 +413,8 @@ function startStream() {
       const next = markdown.slice(0, Math.min(offset, markdown.length))
       recordUpdate(baselineMetrics, () => baselineEditor.updateCode(next, 'markdown'))
       recordUpdate(smoothMetrics, () => smoothEditor.updateCode(next, 'markdown'))
+      recordUpdate(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode(next, 'markdown'))
+      recordUpdate(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode(next, 'markdown'))
       refreshSamples()
       if (offset >= markdown.length)
         stopStream()
@@ -411,14 +423,18 @@ function startStream() {
 }
 
 onMounted(async () => {
-  if (!baselineEl.value || !smoothEl.value)
+  if (!baselineEl.value || !smoothEl.value || !constrainedBaselineEl.value || !constrainedSmoothEl.value)
     return
   await Promise.all([
     baselineEditor.createEditor(baselineEl.value, '', 'markdown'),
     smoothEditor.createEditor(smoothEl.value, '', 'markdown'),
+    constrainedBaselineEditor.createEditor(constrainedBaselineEl.value, '', 'markdown'),
+    constrainedSmoothEditor.createEditor(constrainedSmoothEl.value, '', 'markdown'),
   ])
   observeHeight(baselineEl.value, baselineMetrics, baselineEditor)
   observeHeight(smoothEl.value, smoothMetrics, smoothEditor)
+  observeHeight(constrainedBaselineEl.value, constrainedBaselineMetrics, constrainedBaselineEditor)
+  observeHeight(constrainedSmoothEl.value, constrainedSmoothMetrics, constrainedSmoothEditor)
   installLongTaskObserver()
   ;(window as any).__heightStabilityReport = buildReport
   ;(window as any).__heightStabilityRestart = startStream
@@ -437,6 +453,8 @@ onBeforeUnmount(() => {
   delete (window as any).__heightStabilityRestart
   baselineEditor.cleanupEditor()
   smoothEditor.cleanupEditor()
+  constrainedBaselineEditor.cleanupEditor()
+  constrainedSmoothEditor.cleanupEditor()
 })
 </script>
 
@@ -481,6 +499,10 @@ onBeforeUnmount(() => {
       </div>
     </dl>
 
+    <h2 class="scenario-title">
+      Standard max height (MAX_HEIGHT 420)
+    </h2>
+
     <div class="grid">
       <article class="panel" data-kind="baseline">
         <div class="panel-header">
@@ -523,6 +545,14 @@ onBeforeUnmount(() => {
           <div>
             <dt>style height</dt>
             <dd>{{ baselineMetrics.styleHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>max height</dt>
+            <dd>{{ baselineMetrics.maxHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>overflow</dt>
+            <dd>{{ baselineMetrics.overflowY || 'n/a' }}</dd>
           </div>
           <div>
             <dt>content height</dt>
@@ -587,6 +617,14 @@ onBeforeUnmount(() => {
             <dd>{{ smoothMetrics.styleHeight || 'n/a' }}</dd>
           </div>
           <div>
+            <dt>max height</dt>
+            <dd>{{ smoothMetrics.maxHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>overflow</dt>
+            <dd>{{ smoothMetrics.overflowY || 'n/a' }}</dd>
+          </div>
+          <div>
             <dt>content height</dt>
             <dd>{{ smoothMetrics.monacoContentHeight }}px</dd>
           </div>
@@ -604,6 +642,152 @@ onBeforeUnmount(() => {
           </div>
         </dl>
         <div ref="smoothEl" class="editor" />
+      </article>
+    </div>
+
+    <h2 class="scenario-title">
+      Constrained max height (MAX_HEIGHT 180)
+    </h2>
+
+    <div class="grid">
+      <article class="panel" data-kind="constrained-baseline">
+        <div class="panel-header">
+          <h2>Baseline</h2>
+          <span>MAX_HEIGHT: 180, smoothHeightTransition: false</span>
+        </div>
+        <dl class="metrics">
+          <div>
+            <dt>height</dt>
+            <dd>{{ constrainedBaselineMetrics.current }}px</dd>
+          </div>
+          <div>
+            <dt>max delta</dt>
+            <dd>{{ constrainedBaselineMetrics.maxDelta }}px</dd>
+          </div>
+          <div>
+            <dt>large jumps</dt>
+            <dd>{{ constrainedBaselineMetrics.largeJumps }}</dd>
+          </div>
+          <div>
+            <dt>changes</dt>
+            <dd>{{ constrainedBaselineMetrics.changes }}</dd>
+          </div>
+          <div>
+            <dt>scrollbar</dt>
+            <dd>{{ constrainedBaselineMetrics.hasScrollbar ? 'yes' : 'no' }}</dd>
+          </div>
+          <div>
+            <dt>monaco scrollbar</dt>
+            <dd>{{ constrainedBaselineMetrics.monacoHasScrollbar ? 'yes' : 'no' }}</dd>
+          </div>
+          <div>
+            <dt>scroll height</dt>
+            <dd>{{ constrainedBaselineMetrics.scrollHeight }}px</dd>
+          </div>
+          <div>
+            <dt>client height</dt>
+            <dd>{{ constrainedBaselineMetrics.clientHeight }}px</dd>
+          </div>
+          <div>
+            <dt>style height</dt>
+            <dd>{{ constrainedBaselineMetrics.styleHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>max height</dt>
+            <dd>{{ constrainedBaselineMetrics.maxHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>overflow</dt>
+            <dd>{{ constrainedBaselineMetrics.overflowY || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>content height</dt>
+            <dd>{{ constrainedBaselineMetrics.monacoContentHeight }}px</dd>
+          </div>
+          <div>
+            <dt>layout height</dt>
+            <dd>{{ constrainedBaselineMetrics.monacoLayoutHeight }}px</dd>
+          </div>
+          <div>
+            <dt>scroll top</dt>
+            <dd>{{ constrainedBaselineMetrics.monacoScrollTop }}px</dd>
+          </div>
+          <div>
+            <dt>avg update</dt>
+            <dd>{{ updateAverage(constrainedBaselineMetrics) }}ms</dd>
+          </div>
+        </dl>
+        <div ref="constrainedBaselineEl" class="editor" />
+      </article>
+
+      <article class="panel" data-kind="constrained-smooth">
+        <div class="panel-header">
+          <h2>Smooth</h2>
+          <span>MAX_HEIGHT: 180, smoothHeightTransition: true</span>
+        </div>
+        <dl class="metrics">
+          <div>
+            <dt>height</dt>
+            <dd>{{ constrainedSmoothMetrics.current }}px</dd>
+          </div>
+          <div>
+            <dt>max delta</dt>
+            <dd>{{ constrainedSmoothMetrics.maxDelta }}px</dd>
+          </div>
+          <div>
+            <dt>large jumps</dt>
+            <dd>{{ constrainedSmoothMetrics.largeJumps }}</dd>
+          </div>
+          <div>
+            <dt>changes</dt>
+            <dd>{{ constrainedSmoothMetrics.changes }}</dd>
+          </div>
+          <div>
+            <dt>scrollbar</dt>
+            <dd>{{ constrainedSmoothMetrics.hasScrollbar ? 'yes' : 'no' }}</dd>
+          </div>
+          <div>
+            <dt>monaco scrollbar</dt>
+            <dd>{{ constrainedSmoothMetrics.monacoHasScrollbar ? 'yes' : 'no' }}</dd>
+          </div>
+          <div>
+            <dt>scroll height</dt>
+            <dd>{{ constrainedSmoothMetrics.scrollHeight }}px</dd>
+          </div>
+          <div>
+            <dt>client height</dt>
+            <dd>{{ constrainedSmoothMetrics.clientHeight }}px</dd>
+          </div>
+          <div>
+            <dt>style height</dt>
+            <dd>{{ constrainedSmoothMetrics.styleHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>max height</dt>
+            <dd>{{ constrainedSmoothMetrics.maxHeight || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>overflow</dt>
+            <dd>{{ constrainedSmoothMetrics.overflowY || 'n/a' }}</dd>
+          </div>
+          <div>
+            <dt>content height</dt>
+            <dd>{{ constrainedSmoothMetrics.monacoContentHeight }}px</dd>
+          </div>
+          <div>
+            <dt>layout height</dt>
+            <dd>{{ constrainedSmoothMetrics.monacoLayoutHeight }}px</dd>
+          </div>
+          <div>
+            <dt>scroll top</dt>
+            <dd>{{ constrainedSmoothMetrics.monacoScrollTop }}px</dd>
+          </div>
+          <div>
+            <dt>avg update</dt>
+            <dd>{{ updateAverage(constrainedSmoothMetrics) }}ms</dd>
+          </div>
+        </dl>
+        <div ref="constrainedSmoothEl" class="editor" />
       </article>
     </div>
   </section>
@@ -634,6 +818,10 @@ h1 {
 
 h2 {
   font-size: 16px;
+}
+
+.scenario-title {
+  margin-top: 4px;
 }
 
 .actions {
