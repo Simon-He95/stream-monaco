@@ -406,6 +406,29 @@ describe('EditorManager update throttling', () => {
     expect(container.style.height).toBe('60px')
   })
 
+  it('restores scrollbar gutter after smooth editor cleanup', async () => {
+    const { useMonaco } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      smoothHeightTransition: true,
+      updateThrottleMs: 0,
+    })
+
+    const container = {
+      style: { scrollbarGutter: 'auto' },
+      innerHTML: '',
+    } as any
+    await monaco.createEditor(container, '', 'json')
+    await vi.runAllTimersAsync()
+
+    expect(container.style.scrollbarGutter).toBe('stable')
+
+    monaco.cleanupEditor()
+    expect(container.style.scrollbarGutter).toBe('auto')
+  })
+
   it('keeps scroll pinned to top before streamed content reaches max height', async () => {
     const { useMonaco, __getLastEditor } = await loadUseMonaco()
     const monaco = useMonaco({

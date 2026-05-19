@@ -150,6 +150,48 @@ describe('EditorManager cleanup semantics', () => {
     expect(manager['appendBufferScheduled']).toBe(false)
     expect(manager['appendBuffer']).toHaveLength(0)
   })
+
+  it('uses debounced height update below max height when reveal sync is not needed', () => {
+    const manager = createEditorManager()
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    const layout = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['editorView'] = {
+      getContentHeight: () => 100,
+      layout,
+      getScrollTop: () => 0,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(100)
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(updateNow).not.toHaveBeenCalled()
+    expect(layout).toHaveBeenCalledTimes(1)
+    expect(manager['lastContainer']?.style.overflow).toBe('hidden')
+  })
+
+  it('flushes height immediately when max-height reveal coordination is needed', () => {
+    const manager = createEditorManager()
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['editorView'] = {
+      getContentHeight: () => 600,
+      layout: vi.fn(),
+      getScrollTop: () => 0,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(600)
+
+    expect(update).not.toHaveBeenCalled()
+    expect(updateNow).toHaveBeenCalledTimes(1)
+    expect(manager['lastContainer']?.style.overflow).toBe('auto')
+  })
 })
 
 describe('DiffEditorManager cleanup semantics', () => {

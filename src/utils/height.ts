@@ -33,8 +33,12 @@ export function createHeightManager(
     && !prefersReducedMotion()
   const previousTransition = container.style.transition || ''
 
-  if (transitionEnabled)
-    container.style.transition = `height ${transitionMs}ms ${transitionEasing}`
+  if (transitionEnabled) {
+    const heightTransition = `height ${transitionMs}ms ${transitionEasing}`
+    container.style.transition = previousTransition
+      ? `${previousTransition}, ${heightTransition}`
+      : heightTransition
+  }
 
   let raf: number | null = null
   let debounceTimer: number | null = null

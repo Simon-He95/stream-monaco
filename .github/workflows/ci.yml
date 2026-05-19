@@ -84,7 +84,7 @@ jobs:
         run: nr typecheck
 
   playwright-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: test
 
     steps:

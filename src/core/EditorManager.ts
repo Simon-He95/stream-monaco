@@ -64,6 +64,7 @@ export class EditorManager {
 
   private rafScheduler = createRafScheduler()
   private editorHeightManager: ReturnType<typeof createHeightManager> | null = null
+  private previousScrollbarGutter: string | null = null
   // debounce id for reveal to coalesce rapid calls (ms)
   private revealDebounceId: number | null = null
   private readonly revealDebounceMs = defaultRevealDebounceMs
@@ -401,7 +402,11 @@ export class EditorManager {
       return null
 
     const computed = this.computedHeight(this.editorView)
-    this.editorHeightManager?.updateNow()
+    const needsRevealSync = computed >= this.maxHeightValue - 1 && this.shouldRevealAfterLayout()
+    if (needsRevealSync)
+      this.editorHeightManager?.updateNow()
+    else
+      this.editorHeightManager?.update()
     this.setOverflowForHeight(computed)
     if (computed >= this.maxHeightValue - 1) {
       return computed
@@ -437,8 +442,11 @@ export class EditorManager {
     // editor reaches its configured max height. We'll toggle to `auto`
     // when the computed height reaches `maxHeightValue`.
     container.style.overflow = 'hidden'
-    if (this.isSmoothHeightTransitionEnabled())
+    this.previousScrollbarGutter = null
+    if (this.isSmoothHeightTransitionEnabled()) {
+      this.previousScrollbarGutter = container.style.scrollbarGutter || ''
       container.style.scrollbarGutter = 'stable'
+    }
     container.style.maxHeight = this.maxHeightCSS
 
     this.editorView = monaco.editor.create(container, {
@@ -944,6 +952,9 @@ export class EditorManager {
     }
     this.lastKnownCode = null
     if (this.lastContainer) {
+      if (this.previousScrollbarGutter != null)
+        this.lastContainer.style.scrollbarGutter = this.previousScrollbarGutter
+      this.previousScrollbarGutter = null
       this.lastContainer.style.minHeight = ''
       this.lastContainer.innerHTML = ''
       this.lastContainer = null
@@ -972,6 +983,9 @@ export class EditorManager {
     this._hasScrollBar = false
     this.shouldAutoScroll = !!this.autoScrollInitial
     this.lastScrollTop = 0
+    if (this.lastContainer && this.previousScrollbarGutter != null)
+      this.lastContainer.style.scrollbarGutter = this.previousScrollbarGutter
+    this.previousScrollbarGutter = null
 
     if (this.editorHeightManager) {
       this.editorHeightManager.dispose()
