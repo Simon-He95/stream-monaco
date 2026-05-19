@@ -73,6 +73,22 @@ describe('createHeightManager', () => {
     expect(container.style.transition).toBe('opacity 100ms linear')
   })
 
+  it('does not overwrite transition changes made after creation', () => {
+    const container = {
+      style: { height: '', transition: 'opacity 100ms linear' },
+    } as unknown as HTMLElement
+    const m = createHeightManager(container, () => 100, {
+      smooth: true,
+      transitionMs: 120,
+      transitionEasing: 'linear',
+    })
+
+    container.style.transition = 'opacity 100ms linear, height 120ms linear, color 80ms linear'
+    m.dispose()
+
+    expect(container.style.transition).toBe('opacity 100ms linear, color 80ms linear')
+  })
+
   it('does not enable transition when prefers-reduced-motion is reduce', () => {
     vi.stubGlobal('window', {
       matchMedia: vi.fn(() => ({ matches: true })),

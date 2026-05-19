@@ -289,6 +289,7 @@ export class DiffEditorManager {
   }
 
   private clearAsyncWork() {
+    this.revealTicketDiff += 1
     this.cancelRafs()
     this.pendingDiffUpdate = null
     this.lastKnownModifiedDirty = false
@@ -5234,7 +5235,6 @@ export class DiffEditorManager {
       this.lastContainer = null
     }
     // clear any pending reveal debounce and reset last reveal cache
-    this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
     this.diffPreviousUnchangedModelState = null
@@ -5268,7 +5268,6 @@ export class DiffEditorManager {
       this.diffHeightManager.dispose()
       this.diffHeightManager = null
     }
-    this.revealTicketDiff = 0
     this.lastRevealLineDiff = null
     this.diffPersistedUnchangedModelState = null
     this.diffPreviousUnchangedModelState = null

@@ -32,9 +32,9 @@ export function createHeightManager(
     && transitionMs > 0
     && !prefersReducedMotion()
   const previousTransition = container.style.transition || ''
+  const heightTransition = `height ${transitionMs}ms ${transitionEasing}`
 
   if (transitionEnabled) {
-    const heightTransition = `height ${transitionMs}ms ${transitionEasing}`
     container.style.transition = previousTransition
       ? `${previousTransition}, ${heightTransition}`
       : heightTransition
@@ -140,8 +140,16 @@ export function createHeightManager(
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
-    if (transitionEnabled)
-      container.style.transition = previousTransition
+    if (transitionEnabled) {
+      const currentTransition = container.style.transition || ''
+      if (currentTransition.includes(heightTransition)) {
+        container.style.transition = currentTransition
+          .replace(heightTransition, '')
+          .replace(/\s*,\s*,\s*/g, ', ')
+          .replace(/^\s*,\s*|\s*,\s*$/g, '')
+          .trim()
+      }
+    }
   }
   function isSuppressed() {
     return suppressed

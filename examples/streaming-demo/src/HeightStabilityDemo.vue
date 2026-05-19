@@ -362,7 +362,7 @@ function publishReport() {
   document.documentElement.dataset.heightStabilityReport = JSON.stringify(buildReport())
 }
 
-function stopStream() {
+function stopStream(options: { finalSample?: boolean } = {}) {
   if (startTimer != null) {
     clearTimeout(startTimer)
     startTimer = null
@@ -382,6 +382,8 @@ function stopStream() {
     : runtimeMetrics.streamMs
   refreshSamples()
   publishReport()
+  if (options.finalSample === false)
+    return
   finalSampleTimer = setTimeout(() => {
     finalSampleTimer = null
     refreshSamples()
@@ -442,7 +444,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  stopStream()
+  stopStream({ finalSample: false })
   stopFrameSampler()
   longTaskObserver?.disconnect()
   longTaskObserver = null
@@ -466,7 +468,7 @@ onBeforeUnmount(() => {
         <button :disabled="running" @click="startStream">
           Restart
         </button>
-        <button :disabled="!running" @click="stopStream">
+        <button :disabled="!running" @click="stopStream()">
           Stop
         </button>
       </div>

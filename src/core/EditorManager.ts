@@ -126,6 +126,7 @@ export class EditorManager {
   }
 
   private clearAsyncWork() {
+    this.revealTicket += 1
     this.cancelRafs()
     this.pendingUpdate = null
     this.lastKnownCodeDirty = false
@@ -403,7 +404,8 @@ export class EditorManager {
 
     const computed = this.computedHeight(this.editorView)
     const needsRevealSync = computed >= this.maxHeightValue - 1 && this.shouldRevealAfterLayout()
-    if (needsRevealSync)
+    const useSmoothHeightTransition = this.isSmoothHeightTransitionEnabled()
+    if (needsRevealSync || !useSmoothHeightTransition)
       this.editorHeightManager?.updateNow()
     else
       this.editorHeightManager?.update()
@@ -413,6 +415,15 @@ export class EditorManager {
     }
 
     this._hasScrollBar = false
+    if (useSmoothHeightTransition) {
+      try {
+        if ((this.editorView.getScrollTop?.() ?? 0) !== 0)
+          this.editorView.setScrollTop?.(0)
+        this.lastScrollTop = 0
+      }
+      catch {}
+      return computed
+    }
     try {
       this.editorView.layout?.()
     }
