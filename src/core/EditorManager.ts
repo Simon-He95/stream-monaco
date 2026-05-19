@@ -71,6 +71,7 @@ export class EditorManager {
   // idle timer for final batch reveal
   private revealIdleTimerId: number | null = null
   private revealTicket = 0
+  private layoutTicket = 0
   private revealStrategyOption?: 'bottom' | 'centerIfOutside' | 'center'
   private revealBatchOnIdleMsOption?: number
   private readonly scrollWatcherSuppressionMs = 500
@@ -105,6 +106,7 @@ export class EditorManager {
     this.rafScheduler.cancel('maybe-scroll')
     this.rafScheduler.cancel('reveal')
     this.rafScheduler.cancel('immediate-reveal')
+    this.rafScheduler.cancel('layout-after-height')
     this.rafScheduler.cancel('maybe-resume')
     this.rafScheduler.cancel('append')
   }
@@ -127,6 +129,7 @@ export class EditorManager {
 
   private clearAsyncWork() {
     this.revealTicket += 1
+    this.layoutTicket += 1
     this.cancelRafs()
     this.pendingUpdate = null
     this.lastKnownCodeDirty = false
@@ -187,6 +190,10 @@ export class EditorManager {
 
   private isSmoothHeightTransitionEnabled() {
     return this.options.smoothHeightTransition ?? false
+  }
+
+  private isAutomaticLayoutEnabled() {
+    return this.options.automaticLayout !== false
   }
 
   private getHeightChangeTolerancePx() {
@@ -439,11 +446,14 @@ export class EditorManager {
       this.editorHeightManager?.update()
     this.setOverflowForHeight(computed)
     if (computed >= this.maxHeightValue - 1) {
+      if (useSmoothHeightTransition)
+        this.scheduleLayoutAfterHeightApplied(computed)
       return computed
     }
 
     this._hasScrollBar = false
     if (useSmoothHeightTransition) {
+      this.scheduleLayoutAfterHeightApplied(computed)
       try {
         if ((this.editorView.getScrollTop?.() ?? 0) !== 0)
           this.editorView.setScrollTop?.(0)
@@ -463,6 +473,23 @@ export class EditorManager {
     }
     catch {}
     return computed
+  }
+
+  private scheduleLayoutAfterHeightApplied(target: number) {
+    if (this.isAutomaticLayoutEnabled() || !this.editorView)
+      return
+    const editor = this.editorView
+    const ticket = ++this.layoutTicket
+    this.rafScheduler.schedule('layout-after-height', async () => {
+      try {
+        await this.waitForHeightApplied(target, 500)
+        if (ticket !== this.layoutTicket || this.editorView !== editor)
+          return
+        editor.layout?.()
+        this.measureViewport()
+      }
+      catch (err) { error('EditorManager', 'scheduleLayoutAfterHeightApplied error', err) }
+    })
   }
 
   async createEditor(

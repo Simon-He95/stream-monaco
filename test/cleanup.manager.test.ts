@@ -32,6 +32,7 @@ const EDITOR_RAF_KINDS = [
   'content-size-change',
   'sync-last-known',
   'immediate-reveal',
+  'layout-after-height',
   'update',
   'append',
 ] as const
@@ -183,7 +184,7 @@ describe('EditorManager cleanup semantics', () => {
     expect(manager['lastContainer']?.style.overflow).toBe('hidden')
   })
 
-  it('keeps smooth height updates debounced below max height', () => {
+  it('keeps smooth automatic-layout height updates debounced below max height', () => {
     const manager = createEditorManager({ smoothHeightTransition: true })
     const update = vi.fn()
     const updateNow = vi.fn()
@@ -202,6 +203,42 @@ describe('EditorManager cleanup semantics', () => {
     expect(update).toHaveBeenCalledTimes(1)
     expect(updateNow).not.toHaveBeenCalled()
     expect(layout).not.toHaveBeenCalled()
+    expect(manager['lastContainer']?.style.overflow).toBe('hidden')
+  })
+
+  it('lays out smooth editors without automatic layout after height settles', async () => {
+    const manager = createEditorManager({
+      smoothHeightTransition: true,
+      automaticLayout: false,
+    })
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    const layout = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['waitForHeightApplied'] = vi.fn(() => Promise.resolve()) as any
+    manager['rafScheduler'] = {
+      schedule: vi.fn((_: string, cb: FrameRequestCallback) => cb(0)),
+      cancel: vi.fn(),
+    }
+    manager['editorView'] = {
+      getContentHeight: () => 100,
+      getLayoutInfo: () => ({ height: 100 }),
+      getOption: () => 20,
+      getScrollHeight: () => 100,
+      getScrollTop: () => 0,
+      layout,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(100)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(updateNow).not.toHaveBeenCalled()
+    expect(manager['waitForHeightApplied']).toHaveBeenCalledWith(100, 500)
+    expect(layout).toHaveBeenCalledTimes(1)
     expect(manager['lastContainer']?.style.overflow).toBe('hidden')
   })
 

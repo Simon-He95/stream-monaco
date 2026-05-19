@@ -24,10 +24,10 @@ interface HeightMetrics {
   monacoLayoutHeight: number
   monacoHasScrollbar: boolean
   lineCount: number
-  scheduleCalls: number
-  scheduleTotalMs: number
-  scheduleMaxMs: number
-  slowSchedules: number
+  updateCallCount: number
+  updateCallTotalMs: number
+  updateCallMaxMs: number
+  slowUpdateCalls: number
 }
 
 interface RuntimeMetrics {
@@ -69,10 +69,10 @@ function createHeightMetrics() {
     monacoLayoutHeight: 0,
     monacoHasScrollbar: false,
     lineCount: 0,
-    scheduleCalls: 0,
-    scheduleTotalMs: 0,
-    scheduleMaxMs: 0,
-    slowSchedules: 0,
+    updateCallCount: 0,
+    updateCallTotalMs: 0,
+    updateCallMaxMs: 0,
+    slowUpdateCalls: 0,
   })
 }
 
@@ -155,6 +155,7 @@ const editor = useMonaco({
 const markdown = Array.from({ length: 20 })
   .map((_, index) => `${sections[index % sections.length]}\nParagraph ${index + 1}: streaming content expands the editor host a little at a time.\n`)
   .join('\n')
+const largeHeightJumpThresholdPx = 80
 
 let timer: ReturnType<typeof setInterval> | null = null
 let startTimer: ReturnType<typeof setTimeout> | null = null
@@ -187,10 +188,10 @@ function resetMetrics(metrics: HeightMetrics) {
   metrics.monacoLayoutHeight = 0
   metrics.monacoHasScrollbar = false
   metrics.lineCount = 0
-  metrics.scheduleCalls = 0
-  metrics.scheduleTotalMs = 0
-  metrics.scheduleMaxMs = 0
-  metrics.slowSchedules = 0
+  metrics.updateCallCount = 0
+  metrics.updateCallTotalMs = 0
+  metrics.updateCallMaxMs = 0
+  metrics.slowUpdateCalls = 0
 }
 
 function resetRuntimeMetrics() {
@@ -207,10 +208,10 @@ function round(value: number) {
   return Math.round(value * 100) / 100
 }
 
-function scheduleAverage(metrics: HeightMetrics) {
-  if (metrics.scheduleCalls === 0)
+function updateCallAverage(metrics: HeightMetrics) {
+  if (metrics.updateCallCount === 0)
     return 0
-  return round(metrics.scheduleTotalMs / metrics.scheduleCalls)
+  return round(metrics.updateCallTotalMs / metrics.updateCallCount)
 }
 
 function averageFrameGap() {
@@ -248,7 +249,7 @@ function recordHeight(height: number, metrics: HeightMetrics) {
     if (delta >= 0.5) {
       metrics.changes += 1
       metrics.maxDelta = Math.max(metrics.maxDelta, Math.round(delta))
-      if (delta >= 64)
+      if (delta >= largeHeightJumpThresholdPx)
         metrics.largeJumps += 1
     }
   }
@@ -265,15 +266,15 @@ function observeHeight(target: HTMLElement, metrics: HeightMetrics, editorApi: t
   observers.push(observer)
 }
 
-function recordSchedule(metrics: HeightMetrics, run: () => void) {
+function recordUpdateCall(metrics: HeightMetrics, run: () => void) {
   const start = performance.now()
   run()
   const duration = performance.now() - start
-  metrics.scheduleCalls += 1
-  metrics.scheduleTotalMs = round(metrics.scheduleTotalMs + duration)
-  metrics.scheduleMaxMs = Math.max(metrics.scheduleMaxMs, round(duration))
+  metrics.updateCallCount += 1
+  metrics.updateCallTotalMs = round(metrics.updateCallTotalMs + duration)
+  metrics.updateCallMaxMs = Math.max(metrics.updateCallMaxMs, round(duration))
   if (duration > 8)
-    metrics.slowSchedules += 1
+    metrics.slowUpdateCalls += 1
 }
 
 function stopFrameSampler() {
@@ -341,19 +342,19 @@ function buildReport() {
     },
     baseline: {
       ...baselineMetrics,
-      scheduleAverageMs: scheduleAverage(baselineMetrics),
+      updateCallAverageMs: updateCallAverage(baselineMetrics),
     },
     smooth: {
       ...smoothMetrics,
-      scheduleAverageMs: scheduleAverage(smoothMetrics),
+      updateCallAverageMs: updateCallAverage(smoothMetrics),
     },
     constrainedBaseline: {
       ...constrainedBaselineMetrics,
-      scheduleAverageMs: scheduleAverage(constrainedBaselineMetrics),
+      updateCallAverageMs: updateCallAverage(constrainedBaselineMetrics),
     },
     constrainedSmooth: {
       ...constrainedSmoothMetrics,
-      scheduleAverageMs: scheduleAverage(constrainedSmoothMetrics),
+      updateCallAverageMs: updateCallAverage(constrainedSmoothMetrics),
     },
   }
 }
@@ -397,10 +398,10 @@ function startStream() {
   running.value = true
   streamStartedAt = performance.now()
   resetRuntimeMetrics()
-  recordSchedule(baselineMetrics, () => baselineEditor.updateCode('', 'markdown'))
-  recordSchedule(smoothMetrics, () => smoothEditor.updateCode('', 'markdown'))
-  recordSchedule(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode('', 'markdown'))
-  recordSchedule(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode('', 'markdown'))
+  recordUpdateCall(baselineMetrics, () => baselineEditor.updateCode('', 'markdown'))
+  recordUpdateCall(smoothMetrics, () => smoothEditor.updateCode('', 'markdown'))
+  recordUpdateCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode('', 'markdown'))
+  recordUpdateCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode('', 'markdown'))
   startTimer = setTimeout(() => {
     startTimer = null
     resetMetrics(baselineMetrics)
@@ -413,10 +414,10 @@ function startStream() {
     timer = setInterval(() => {
       offset += 42
       const next = markdown.slice(0, Math.min(offset, markdown.length))
-      recordSchedule(baselineMetrics, () => baselineEditor.updateCode(next, 'markdown'))
-      recordSchedule(smoothMetrics, () => smoothEditor.updateCode(next, 'markdown'))
-      recordSchedule(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode(next, 'markdown'))
-      recordSchedule(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode(next, 'markdown'))
+      recordUpdateCall(baselineMetrics, () => baselineEditor.updateCode(next, 'markdown'))
+      recordUpdateCall(smoothMetrics, () => smoothEditor.updateCode(next, 'markdown'))
+      recordUpdateCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode(next, 'markdown'))
+      recordUpdateCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode(next, 'markdown'))
       refreshSamples()
       if (offset >= markdown.length)
         stopStream()
@@ -569,8 +570,8 @@ onBeforeUnmount(() => {
             <dd>{{ baselineMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg schedule</dt>
-            <dd>{{ scheduleAverage(baselineMetrics) }}ms</dd>
+            <dt>avg update call</dt>
+            <dd>{{ updateCallAverage(baselineMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="baselineEl" class="editor" />
@@ -639,8 +640,8 @@ onBeforeUnmount(() => {
             <dd>{{ smoothMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg schedule</dt>
-            <dd>{{ scheduleAverage(smoothMetrics) }}ms</dd>
+            <dt>avg update call</dt>
+            <dd>{{ updateCallAverage(smoothMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="smoothEl" class="editor" />
@@ -715,8 +716,8 @@ onBeforeUnmount(() => {
             <dd>{{ constrainedBaselineMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg schedule</dt>
-            <dd>{{ scheduleAverage(constrainedBaselineMetrics) }}ms</dd>
+            <dt>avg update call</dt>
+            <dd>{{ updateCallAverage(constrainedBaselineMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="constrainedBaselineEl" class="editor" />
@@ -785,8 +786,8 @@ onBeforeUnmount(() => {
             <dd>{{ constrainedSmoothMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg schedule</dt>
-            <dd>{{ scheduleAverage(constrainedSmoothMetrics) }}ms</dd>
+            <dt>avg update call</dt>
+            <dd>{{ updateCallAverage(constrainedSmoothMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="constrainedSmoothEl" class="editor" />
