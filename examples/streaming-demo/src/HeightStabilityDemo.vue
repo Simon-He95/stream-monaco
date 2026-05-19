@@ -24,10 +24,10 @@ interface HeightMetrics {
   monacoLayoutHeight: number
   monacoHasScrollbar: boolean
   lineCount: number
-  updateCallCount: number
-  updateCallTotalMs: number
-  updateCallMaxMs: number
-  slowUpdateCalls: number
+  enqueueCallCount: number
+  enqueueCallTotalMs: number
+  enqueueCallMaxMs: number
+  slowEnqueueCalls: number
 }
 
 interface RuntimeMetrics {
@@ -69,10 +69,10 @@ function createHeightMetrics() {
     monacoLayoutHeight: 0,
     monacoHasScrollbar: false,
     lineCount: 0,
-    updateCallCount: 0,
-    updateCallTotalMs: 0,
-    updateCallMaxMs: 0,
-    slowUpdateCalls: 0,
+    enqueueCallCount: 0,
+    enqueueCallTotalMs: 0,
+    enqueueCallMaxMs: 0,
+    slowEnqueueCalls: 0,
   })
 }
 
@@ -188,10 +188,10 @@ function resetMetrics(metrics: HeightMetrics) {
   metrics.monacoLayoutHeight = 0
   metrics.monacoHasScrollbar = false
   metrics.lineCount = 0
-  metrics.updateCallCount = 0
-  metrics.updateCallTotalMs = 0
-  metrics.updateCallMaxMs = 0
-  metrics.slowUpdateCalls = 0
+  metrics.enqueueCallCount = 0
+  metrics.enqueueCallTotalMs = 0
+  metrics.enqueueCallMaxMs = 0
+  metrics.slowEnqueueCalls = 0
 }
 
 function resetRuntimeMetrics() {
@@ -208,10 +208,10 @@ function round(value: number) {
   return Math.round(value * 100) / 100
 }
 
-function updateCallAverage(metrics: HeightMetrics) {
-  if (metrics.updateCallCount === 0)
+function enqueueCallAverage(metrics: HeightMetrics) {
+  if (metrics.enqueueCallCount === 0)
     return 0
-  return round(metrics.updateCallTotalMs / metrics.updateCallCount)
+  return round(metrics.enqueueCallTotalMs / metrics.enqueueCallCount)
 }
 
 function averageFrameGap() {
@@ -266,15 +266,15 @@ function observeHeight(target: HTMLElement, metrics: HeightMetrics, editorApi: t
   observers.push(observer)
 }
 
-function recordUpdateCall(metrics: HeightMetrics, run: () => void) {
+function recordEnqueueCall(metrics: HeightMetrics, run: () => void) {
   const start = performance.now()
   run()
   const duration = performance.now() - start
-  metrics.updateCallCount += 1
-  metrics.updateCallTotalMs = round(metrics.updateCallTotalMs + duration)
-  metrics.updateCallMaxMs = Math.max(metrics.updateCallMaxMs, round(duration))
+  metrics.enqueueCallCount += 1
+  metrics.enqueueCallTotalMs = round(metrics.enqueueCallTotalMs + duration)
+  metrics.enqueueCallMaxMs = Math.max(metrics.enqueueCallMaxMs, round(duration))
   if (duration > 8)
-    metrics.slowUpdateCalls += 1
+    metrics.slowEnqueueCalls += 1
 }
 
 function stopFrameSampler() {
@@ -342,19 +342,19 @@ function buildReport() {
     },
     baseline: {
       ...baselineMetrics,
-      updateCallAverageMs: updateCallAverage(baselineMetrics),
+      enqueueCallAverageMs: enqueueCallAverage(baselineMetrics),
     },
     smooth: {
       ...smoothMetrics,
-      updateCallAverageMs: updateCallAverage(smoothMetrics),
+      enqueueCallAverageMs: enqueueCallAverage(smoothMetrics),
     },
     constrainedBaseline: {
       ...constrainedBaselineMetrics,
-      updateCallAverageMs: updateCallAverage(constrainedBaselineMetrics),
+      enqueueCallAverageMs: enqueueCallAverage(constrainedBaselineMetrics),
     },
     constrainedSmooth: {
       ...constrainedSmoothMetrics,
-      updateCallAverageMs: updateCallAverage(constrainedSmoothMetrics),
+      enqueueCallAverageMs: enqueueCallAverage(constrainedSmoothMetrics),
     },
   }
 }
@@ -398,10 +398,10 @@ function startStream() {
   running.value = true
   streamStartedAt = performance.now()
   resetRuntimeMetrics()
-  recordUpdateCall(baselineMetrics, () => baselineEditor.updateCode('', 'markdown'))
-  recordUpdateCall(smoothMetrics, () => smoothEditor.updateCode('', 'markdown'))
-  recordUpdateCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode('', 'markdown'))
-  recordUpdateCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode('', 'markdown'))
+  recordEnqueueCall(baselineMetrics, () => baselineEditor.updateCode('', 'markdown'))
+  recordEnqueueCall(smoothMetrics, () => smoothEditor.updateCode('', 'markdown'))
+  recordEnqueueCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode('', 'markdown'))
+  recordEnqueueCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode('', 'markdown'))
   startTimer = setTimeout(() => {
     startTimer = null
     resetMetrics(baselineMetrics)
@@ -414,10 +414,10 @@ function startStream() {
     timer = setInterval(() => {
       offset += 42
       const next = markdown.slice(0, Math.min(offset, markdown.length))
-      recordUpdateCall(baselineMetrics, () => baselineEditor.updateCode(next, 'markdown'))
-      recordUpdateCall(smoothMetrics, () => smoothEditor.updateCode(next, 'markdown'))
-      recordUpdateCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode(next, 'markdown'))
-      recordUpdateCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode(next, 'markdown'))
+      recordEnqueueCall(baselineMetrics, () => baselineEditor.updateCode(next, 'markdown'))
+      recordEnqueueCall(smoothMetrics, () => smoothEditor.updateCode(next, 'markdown'))
+      recordEnqueueCall(constrainedBaselineMetrics, () => constrainedBaselineEditor.updateCode(next, 'markdown'))
+      recordEnqueueCall(constrainedSmoothMetrics, () => constrainedSmoothEditor.updateCode(next, 'markdown'))
       refreshSamples()
       if (offset >= markdown.length)
         stopStream()
@@ -570,8 +570,8 @@ onBeforeUnmount(() => {
             <dd>{{ baselineMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg update call</dt>
-            <dd>{{ updateCallAverage(baselineMetrics) }}ms</dd>
+            <dt>avg enqueue</dt>
+            <dd>{{ enqueueCallAverage(baselineMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="baselineEl" class="editor" />
@@ -640,8 +640,8 @@ onBeforeUnmount(() => {
             <dd>{{ smoothMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg update call</dt>
-            <dd>{{ updateCallAverage(smoothMetrics) }}ms</dd>
+            <dt>avg enqueue</dt>
+            <dd>{{ enqueueCallAverage(smoothMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="smoothEl" class="editor" />
@@ -716,8 +716,8 @@ onBeforeUnmount(() => {
             <dd>{{ constrainedBaselineMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg update call</dt>
-            <dd>{{ updateCallAverage(constrainedBaselineMetrics) }}ms</dd>
+            <dt>avg enqueue</dt>
+            <dd>{{ enqueueCallAverage(constrainedBaselineMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="constrainedBaselineEl" class="editor" />
@@ -786,8 +786,8 @@ onBeforeUnmount(() => {
             <dd>{{ constrainedSmoothMetrics.monacoScrollTop }}px</dd>
           </div>
           <div>
-            <dt>avg update call</dt>
-            <dd>{{ updateCallAverage(constrainedSmoothMetrics) }}ms</dd>
+            <dt>avg enqueue</dt>
+            <dd>{{ enqueueCallAverage(constrainedSmoothMetrics) }}ms</dd>
           </div>
         </dl>
         <div ref="constrainedSmoothEl" class="editor" />
