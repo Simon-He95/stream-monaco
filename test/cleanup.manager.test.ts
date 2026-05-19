@@ -32,6 +32,7 @@ const EDITOR_RAF_KINDS = [
   'content-size-change',
   'sync-last-known',
   'immediate-reveal',
+  'layout-after-height',
   'update',
   'append',
 ] as const
@@ -51,9 +52,9 @@ const DIFF_RAF_KINDS = [
   'appendDiff',
 ] as const
 
-function createEditorManager() {
+function createEditorManager(options: Record<string, unknown> = {}) {
   return new EditorManager(
-    { readOnly: true } as any,
+    { readOnly: true, ...options } as any,
     600,
     '600px',
     true,
@@ -149,6 +150,164 @@ describe('EditorManager cleanup semantics', () => {
     expect(manager['updateThrottleTimer']).toBeNull()
     expect(manager['appendBufferScheduled']).toBe(false)
     expect(manager['appendBuffer']).toHaveLength(0)
+  })
+
+  it('flushes legacy height before layout below max height', () => {
+    const manager = createEditorManager()
+    const container = { style: { overflow: '', height: '' } } as unknown as HTMLElement
+    const update = vi.fn(() => {
+      container.style.height = '100px'
+      return 100
+    })
+    const updateNow = vi.fn(() => {
+      container.style.height = '100px'
+      return 100
+    })
+    const layout = vi.fn()
+    manager['lastContainer'] = container
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['editorView'] = {
+      getContentHeight: () => 100,
+      layout: () => {
+        expect(container.style.height).toBe('100px')
+        layout()
+      },
+      getScrollTop: () => 0,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(100)
+
+    expect(update).not.toHaveBeenCalled()
+    expect(updateNow).toHaveBeenCalledTimes(1)
+    expect(layout).toHaveBeenCalledTimes(1)
+    expect(manager['lastContainer']?.style.overflow).toBe('hidden')
+  })
+
+  it('keeps smooth automatic-layout height updates debounced below max height', () => {
+    const manager = createEditorManager({ smoothHeightTransition: true })
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    const layout = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['editorView'] = {
+      getContentHeight: () => 100,
+      layout,
+      getScrollTop: () => 0,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(100)
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(updateNow).not.toHaveBeenCalled()
+    expect(layout).not.toHaveBeenCalled()
+    expect(manager['lastContainer']?.style.overflow).toBe('hidden')
+  })
+
+  it('lays out smooth editors without automatic layout after height settles', async () => {
+    const manager = createEditorManager({
+      smoothHeightTransition: true,
+      automaticLayout: false,
+    })
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    const layout = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['waitForHeightApplied'] = vi.fn(() => Promise.resolve()) as any
+    manager['rafScheduler'] = {
+      schedule: vi.fn((_: string, cb: FrameRequestCallback) => cb(0)),
+      cancel: vi.fn(),
+    }
+    manager['editorView'] = {
+      getContentHeight: () => 100,
+      getLayoutInfo: () => ({ height: 100 }),
+      getOption: () => 20,
+      getScrollHeight: () => 100,
+      getScrollTop: () => 0,
+      layout,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(100)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(updateNow).not.toHaveBeenCalled()
+    expect(manager['waitForHeightApplied']).toHaveBeenCalledWith(100, 500)
+    expect(layout).toHaveBeenCalledTimes(1)
+    expect(manager['lastContainer']?.style.overflow).toBe('hidden')
+  })
+
+  it('flushes height immediately when max-height reveal coordination is needed', () => {
+    const manager = createEditorManager()
+    const update = vi.fn()
+    const updateNow = vi.fn()
+    manager['lastContainer'] = { style: { overflow: '' } } as unknown as HTMLElement
+    manager['editorHeightManager'] = { update, updateNow } as any
+    manager['editorView'] = {
+      getContentHeight: () => 600,
+      layout: vi.fn(),
+      getScrollTop: () => 0,
+      setScrollTop: vi.fn(),
+    } as any
+
+    expect((manager as any).syncNonOverflowingLayout()).toBe(600)
+
+    expect(update).not.toHaveBeenCalled()
+    expect(updateNow).toHaveBeenCalledTimes(1)
+    expect(manager['lastContainer']?.style.overflow).toBe('auto')
+  })
+
+  it('extends reveal watcher suppression to cover smooth height transitions', () => {
+    const manager = createEditorManager({
+      smoothHeightTransition: true,
+      heightTransitionMs: 800,
+    })
+    manager['editorHeightManager'] = {
+      getTransitionMs: () => 800,
+    } as any
+
+    expect((manager as any).getRevealSuppressionMs()).toBe(900)
+  })
+
+  it('invalidates an in-flight immediate reveal during cleanup', async () => {
+    const manager = createEditorManager({ smoothHeightTransition: true })
+    let resolveWait: () => void = () => {}
+    const waitPromise = new Promise<void>((resolve) => {
+      resolveWait = resolve
+    })
+    const oldEditor = {
+      getContentHeight: () => 600,
+      revealLine: vi.fn(),
+      dispose: vi.fn(),
+    }
+    const newEditor = {
+      revealLine: vi.fn(),
+    }
+    manager['rafScheduler'] = {
+      schedule: vi.fn((_: string, cb: FrameRequestCallback) => cb(0)),
+      cancel: vi.fn(),
+    }
+    manager['editorView'] = oldEditor as any
+    manager['editorHeightManager'] = {
+      update: vi.fn(),
+      updateNow: vi.fn(),
+      dispose: vi.fn(),
+    } as any
+    manager['waitForHeightApplied'] = vi.fn(() => waitPromise) as any
+
+    ;(manager as any).scheduleImmediateRevealAfterLayout(10)
+    manager.cleanup()
+    manager['editorView'] = newEditor as any
+    resolveWait()
+    await waitPromise
+    await Promise.resolve()
+
+    expect(newEditor.revealLine).not.toHaveBeenCalled()
   })
 })
 

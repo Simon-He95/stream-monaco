@@ -1,4 +1,5 @@
 import type * as monaco from 'monaco-editor'
+import type * as monacoApi from 'monaco-editor/esm/vs/editor/editor.api'
 import type {
   Highlighter as _ShikiHighlighter,
   SpecialTheme,
@@ -451,6 +452,31 @@ export interface MonacoOptions
    * - Default (library): 50
    */
   updateThrottleMs?: number
+  /**
+   * Smooth host container height changes while streaming content.
+   * Default: false
+   */
+  smoothHeightTransition?: boolean
+  /**
+   * Height transition duration in milliseconds when smoothHeightTransition is enabled.
+   * Default: 120
+   */
+  heightTransitionMs?: number
+  /**
+   * Height transition easing when smoothHeightTransition is enabled.
+   * Default: cubic-bezier(0.4, 0, 0.2, 1)
+   */
+  heightTransitionEasing?: string
+  /**
+   * Debounce time (ms) to coalesce host height updates.
+   * Default: 0, or 16 when smoothHeightTransition is enabled
+   */
+  heightUpdateDebounceMs?: number
+  /**
+   * Height delta tolerance in pixels before applying a new host height.
+   * Default: 12, or 1 when smoothHeightTransition is enabled
+   */
+  heightChangeTolerancePx?: number
 
   /**
    * Time window (ms) used to throttle diff streaming updates in addition to RAF batching.
@@ -477,7 +503,7 @@ export interface MonacoOptions
   minimalEditMaxChangeRatio?: number
   // 添加在编辑器创建之前的钩子
   onBeforeCreate?: (
-    monaco: typeof import('monaco-editor'),
+    monaco: typeof monacoApi,
   ) => monaco.IDisposable[]
   /**
    * Optional callback that is invoked after a theme change has been applied.
@@ -542,7 +568,7 @@ export interface UseMonacoReturn {
   getEditorView: () => monaco.editor.IStandaloneCodeEditor | null
   getDiffEditorView: () => monaco.editor.IStandaloneDiffEditor | null
   getDiffModels: () => DiffModels
-  getMonacoInstance: () => typeof monaco
+  getMonacoInstance: () => typeof monacoApi
   setUpdateThrottleMs: (ms: number) => void
   getUpdateThrottleMs: () => number
   getCode: () => MonacoCodeValue

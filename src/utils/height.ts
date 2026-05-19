@@ -1,21 +1,54 @@
 import { log } from './logger'
 
-export function createHeightManager(container: HTMLElement, computeNext: () => number | null) {
-  // Debug logging is enabled during development but can be controlled via
+export interface HeightManagerOptions {
+  smooth?: boolean
+  transitionMs?: number
+  transitionEasing?: string
+  debounceMs?: number
+  hysteresisPx?: number
+}
+
+const DEFAULT_TRANSITION_MS = 120
+const DEFAULT_TRANSITION_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)'
+const DEFAULT_HYSTERESIS_PX = 12
+const DEFAULT_DEBOUNCE_MS = 0
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+export function createHeightManager(
+  container: HTMLElement,
+  computeNext: () => number | null,
+  options: HeightManagerOptions = {},
+) {
+  const transitionMs = Math.max(0, options.transitionMs ?? DEFAULT_TRANSITION_MS)
+  const transitionEasing = options.transitionEasing ?? DEFAULT_TRANSITION_EASING
+  const hysteresisPx = Math.max(0, options.hysteresisPx ?? DEFAULT_HYSTERESIS_PX)
+  const debounceMs = Math.max(0, options.debounceMs ?? DEFAULT_DEBOUNCE_MS)
+  const transitionEnabled = options.smooth === true
+    && transitionMs > 0
+    && !prefersReducedMotion()
+  const previousTransition = container.style.transition || ''
+  const heightTransition = `height ${transitionMs}ms ${transitionEasing}`
+
+  if (transitionEnabled) {
+    container.style.transition = previousTransition
+      ? `${previousTransition}, ${heightTransition}`
+      : heightTransition
+  }
 
   let raf: number | null = null
   let debounceTimer: number | null = null
   let lastApplied = -1
   let suppressed = false
-  // larger hysteresis to reduce perceived jitter during incremental growth
-  const HYSTERESIS_PX = 12
-  // debounce delay to coalesce frequent height changes (ms)
-  const DEBOUNCE_MS = 0
 
   function apply() {
     const next = computeNext()
     if (next == null) {
-      return
+      return null
     }
     log('heightManager', 'computeNext ->', { next, lastApplied })
     // Guard against invalid or non-positive heights which can collapse the
@@ -23,7 +56,7 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
     // during transient states; ignore those to keep the editor visible.
     if (!Number.isFinite(next) || next <= 0) {
       log('heightManager', 'invalid next height, ignoring', next)
-      return
+      return null
     }
     const currentHeight
       = Number.parseFloat(container.style.height || '')
@@ -31,16 +64,16 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
         || 0
     if (
       currentHeight > 0
-      && Math.abs(next - currentHeight) <= HYSTERESIS_PX
+      && Math.abs(next - currentHeight) <= hysteresisPx
     ) {
       lastApplied = next
-      return
+      return next
     }
-    if (lastApplied !== -1 && Math.abs(next - lastApplied) <= HYSTERESIS_PX) {
-      return
+    if (lastApplied !== -1 && Math.abs(next - lastApplied) <= hysteresisPx) {
+      return next
     }
     if (next === lastApplied) {
-      return
+      return next
     }
     suppressed = true
     container.style.height = `${next}px`
@@ -49,17 +82,18 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
     queueMicrotask(() => {
       suppressed = false
     })
+    return next
   }
 
   function scheduleApply() {
     // Cancel any pending debounce timer and schedule a new one that will
     // requestAnimationFrame and run `apply`. This batches updates that occur
-    // within DEBOUNCE_MS to avoid rapid reflows.
+    // within debounceMs to avoid rapid reflows.
     if (debounceTimer != null) {
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
-    if (DEBOUNCE_MS === 0) {
+    if (debounceMs === 0) {
       if (raf != null) {
         return
       }
@@ -78,11 +112,23 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
         raf = null
         apply()
       })
-    }, DEBOUNCE_MS) as unknown) as number
+    }, debounceMs) as unknown) as number
   }
 
   function update() {
     scheduleApply()
+  }
+
+  function updateNow() {
+    if (raf != null) {
+      cancelAnimationFrame(raf)
+      raf = null
+    }
+    if (debounceTimer != null) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+    }
+    return apply()
   }
 
   function dispose() {
@@ -94,6 +140,16 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
+    if (transitionEnabled) {
+      const currentTransition = container.style.transition || ''
+      if (currentTransition.includes(heightTransition)) {
+        container.style.transition = currentTransition
+          .replace(heightTransition, '')
+          .replace(/\s*,\s*,\s*/g, ', ')
+          .replace(/^\s*,\s*|\s*,\s*$/g, '')
+          .trim()
+      }
+    }
   }
   function isSuppressed() {
     return suppressed
@@ -101,5 +157,8 @@ export function createHeightManager(container: HTMLElement, computeNext: () => n
   function getLastApplied() {
     return lastApplied
   }
-  return { update, dispose, isSuppressed, getLastApplied }
+  function getTransitionMs() {
+    return transitionEnabled ? transitionMs : 0
+  }
+  return { update, updateNow, dispose, isSuppressed, getLastApplied, getTransitionMs }
 }

@@ -87,6 +87,7 @@
     "bench": "node scripts/stream-benchmark.mjs",
     "bench:playwright": "node scripts/playwright-bench.mjs",
     "smoke:diff": "node scripts/playwright-diff-smoke.mjs",
+    "smoke:height-stability": "node scripts/playwright-height-stability-smoke.mjs",
     "shot:diff-ux": "node scripts/playwright-diff-ux-shot.mjs",
     "validate:diff-gutter": "node scripts/playwright-diff-gutter-validate.mjs",
     "validate:diff-hunk-actions": "node scripts/playwright-diff-hunk-actions-validate.mjs",
