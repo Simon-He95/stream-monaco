@@ -5466,6 +5466,7 @@ export class DiffEditorManager {
     const prevLineInit = model.getLineCount()
     const totalText = parts.join('')
     const totalChars = totalText.length
+    const totalLineBreaks = this.countLineBreaks(totalText)
     // If we received a single very large chunk, split it by lines into smaller
     // chunks so the editor can render and scroll progressively.
     if (parts.length === 1 && totalChars > 5000) {
@@ -5477,7 +5478,7 @@ export class DiffEditorManager {
     const applyChunked
       = parts.length > 1
         && (totalChars > 2000
-          || (model.getLineCount && model.getLineCount() + 0 - prevLineInit > 50))
+          || totalLineBreaks > 50)
     log('diff', 'flushAppendBufferDiff start', {
       partsCount: parts.length,
       totalChars,
@@ -5658,6 +5659,15 @@ export class DiffEditorManager {
     for (let i = 0; i < parts.length; i += chunkLineCount)
       chunks.push(parts.slice(i, i + chunkLineCount).join(''))
     return chunks
+  }
+
+  private countLineBreaks(text: string) {
+    let count = 0
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10)
+        count += 1
+    }
+    return count
   }
 
   private getModelValueLength(model: monaco.editor.ITextModel) {

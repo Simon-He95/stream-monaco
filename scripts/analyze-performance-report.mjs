@@ -3,14 +3,14 @@
 import process from 'node:process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const perfDir = path.join(root, '.perf')
-const reportPath = path.join(perfDir, 'stream-monaco-performance-report.json')
-const analysisJsonPath = path.join(perfDir, 'stream-monaco-performance-analysis.json')
-const analysisMdPath = path.join(perfDir, 'stream-monaco-performance-analysis.md')
+const defaultReportPath = path.join(perfDir, 'stream-monaco-performance-report.json')
+const defaultBudgetPath = path.join(root, 'scripts/performance-budget.json')
+const defaultOutputPath = path.join(perfDir, 'stream-monaco-performance-analysis.md')
 
 const args = process.argv.slice(2)
 const getArg = (name, fallback) => {
@@ -19,7 +19,10 @@ const getArg = (name, fallback) => {
   return hit ? hit.slice(prefix.length) : fallback
 }
 
-const inputPath = path.resolve(root, getArg('--input', reportPath))
+const reportPath = path.resolve(root, getArg('--report', defaultReportPath))
+const budgetPath = path.resolve(root, getArg('--budget', defaultBudgetPath))
+const outputPath = path.resolve(root, getArg('--output', defaultOutputPath))
+const jsonOutputPath = outputPath.replace(/\.md$/i, '.json')
 
 function round(n, digits = 2) {
   if (!Number.isFinite(n))
@@ -28,294 +31,237 @@ function round(n, digits = 2) {
   return Math.round(n * p) / p
 }
 
-function get(obj, pathExpr, fallback = 0) {
-  const value = pathExpr.split('.').reduce((acc, key) => acc?.[key], obj)
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+async function readJson(file, fallback = null) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'))
+  }
+  catch {
+    return fallback
+  }
 }
 
-function p95(result) {
-  return get(result, 'sampleSummary.p95')
+function getBudget(budget, scenario) {
+  return budget?.scenarioBudgets?.[scenario.name] ?? {}
 }
 
-function max(result) {
-  return get(result, 'sampleSummary.max')
-}
-
-function wall(result) {
-  return get(result, 'wallMs') || get(result, 'cdp.wallMs')
-}
-
-function busy(result) {
-  return get(result, 'cdp.mainThreadBusyRatio')
-}
-
-function longTasks(result) {
-  return get(result, 'longTasks.count')
-}
-
-function maxLongTask(result) {
-  return get(result, 'longTasks.maxMs')
-}
-
-function timelinePerOp(result, name) {
-  return get(result, `timeline.${name}.perOperation`)
-}
-
-function timelineCount(result, name) {
-  return get(result, `timeline.${name}.count`)
-}
-
-function ratio(a, b) {
-  if (!a || !b)
+function ratio(actual, limit) {
+  if (typeof actual !== 'number' || typeof limit !== 'number' || !Number.isFinite(actual) || !Number.isFinite(limit) || limit <= 0)
     return 0
-  return round(a / b, 3)
+  return actual / limit
 }
 
-function severity(score) {
-  if (score >= 0.85)
-    return 'high'
-  if (score >= 0.55)
-    return 'medium'
-  return 'low'
+function metricScore(value, budgetValue) {
+  const r = ratio(value, budgetValue)
+  if (r >= 1.2)
+    return 'critical'
+  if (r >= 1)
+    return 'over-budget'
+  if (r >= 0.8)
+    return 'near-budget'
+  return 'ok'
 }
 
-function makeFinding(kind, scenario, score, evidence, diagnosis, action) {
-  return {
-    kind,
-    scenario,
-    severity: severity(score),
-    score: round(score, 3),
-    evidence,
-    diagnosis,
-    action,
-  }
+function maxStatus(statuses) {
+  const weight = { ok: 0, 'near-budget': 1, 'over-budget': 2, critical: 3 }
+  return statuses.reduce((max, item) => weight[item] > weight[max] ? item : max, 'ok')
 }
 
-function analyzeScenario(result) {
-  const findings = []
+function perOp(result, value) {
+  const ops = result.operations || 1
+  return ops > 0 ? value / ops : value
+}
+
+function getHotMetrics(result) {
+  const cdp = result.cdp ?? {}
+  const timeline = result.timeline ?? {}
   const operations = result.operations || 1
-  const isStream = result.name.includes('stream-burst')
-  const isDiff = result.name.startsWith('diff-')
-  const layoutPerOp = timelinePerOp(result, 'Layout')
-  const stylePerOp = timelinePerOp(result, 'UpdateLayoutTree') || timelinePerOp(result, 'RecalculateStyles')
-  const paintPerOp = timelinePerOp(result, 'Paint')
-  const scriptMs = get(result, 'cdp.scriptDurationMs')
-  const taskMs = get(result, 'cdp.taskDurationMs')
-  const wallMs = wall(result)
-
-  if (busy(result) > 0.72 || longTasks(result) >= 3 || maxLongTask(result) > 180) {
-    findings.push(makeFinding(
-      'main-thread',
-      result.name,
-      Math.min(1, Math.max(busy(result), longTasks(result) / 10, maxLongTask(result) / 350)),
-      {
-        busyRatio: busy(result),
-        longTaskCount: longTasks(result),
-        maxLongTaskMs: maxLongTask(result),
-        taskDurationMs: taskMs,
-        scriptDurationMs: scriptMs,
-        wallMs,
-      },
-      '主线程接近饱和，用户会看到输入/滚动/高亮延迟；如果 scriptDuration 占比高，优先查字符串复制、diff 计算和 tokenization。',
-      isDiff && isStream
-        ? '优先检查 DiffEditorManager streaming append 路径，避免每次 flush/chunk 后 model.getValue() 复制完整文档；把 lastKnownModifiedCode 改为增量维护。'
-        : '对该场景打开 Chrome trace，按 FunctionCall/EvaluateScript 聚合调用栈；优先减少同步字符串扫描和高频 DOM/Monaco API 调用。',
-    ))
+  return {
+    p95Ms: result.sampleSummary?.p95 ?? 0,
+    maxMs: result.sampleSummary?.max ?? 0,
+    wallMs: result.wallMs ?? cdp.wallMs ?? 0,
+    taskMs: cdp.taskDurationMs ?? 0,
+    scriptMs: cdp.scriptDurationMs ?? 0,
+    layoutMs: cdp.layoutDurationMs ?? 0,
+    recalcMs: cdp.recalcStyleDurationMs ?? 0,
+    longTasks: result.longTasks?.count ?? 0,
+    maxLongTaskMs: result.longTasks?.maxMs ?? 0,
+    busyRatio: cdp.mainThreadBusyRatio ?? 0,
+    layoutCount: cdp.layoutCount ?? timeline.Layout?.count ?? 0,
+    recalcCount: cdp.recalcStyleCount ?? timeline.UpdateLayoutTree?.count ?? timeline.RecalculateStyles?.count ?? 0,
+    paintCount: timeline.Paint?.count ?? 0,
+    layoutPerOp: timeline.Layout?.perOperation ?? perOp(result, cdp.layoutCount ?? 0),
+    stylePerOp: (timeline.RecalculateStyles?.perOperation || timeline.UpdateLayoutTree?.perOperation || perOp(result, cdp.recalcStyleCount ?? 0)),
+    paintPerOp: timeline.Paint?.perOperation ?? perOp(result, timeline.Paint?.count ?? 0),
+    taskPerOpMs: perOp(result, cdp.taskDurationMs ?? 0),
+    scriptPerOpMs: perOp(result, cdp.scriptDurationMs ?? 0),
+    operations,
   }
-
-  if (layoutPerOp > (isStream ? 1.2 : 3) || stylePerOp > (isStream ? 2.4 : 6)) {
-    findings.push(makeFinding(
-      'layout-style',
-      result.name,
-      Math.min(1, Math.max(layoutPerOp / (isStream ? 2 : 6), stylePerOp / (isStream ? 4 : 10))),
-      {
-        operations,
-        layoutPerOperation: layoutPerOp,
-        stylePerOperation: stylePerOp,
-        layoutCount: get(result, 'cdp.layoutCount'),
-        recalcStyleCount: get(result, 'cdp.recalcStyleCount'),
-      },
-      '每次更新触发了过多 Layout/StyleRecalc，通常来自高度同步、自动滚动 reveal、content-size-change 回调或测试侧轮询 DOM。',
-      '把高度测量和 reveal 合并到同一 RAF；避免在 hot path 读 getContentHeight/getScrollHeight/getBoundingClientRect；确认测试里的 waitForHighlight 没有把查询 DOM 的成本算进库成本。',
-    ))
-  }
-
-  if (paintPerOp > (isStream ? 2.5 : 6)) {
-    findings.push(makeFinding(
-      'paint',
-      result.name,
-      Math.min(1, paintPerOp / (isStream ? 5 : 10)),
-      {
-        operations,
-        paintPerOperation: paintPerOp,
-        paintCount: timelineCount(result, 'Paint'),
-      },
-      'Paint 次数偏高，说明更新拆得过碎或频繁触发可见区域重绘。',
-      'streaming 场景优先增大 updateThrottleMs/diffUpdateThrottleMs 或按 frame 合并 append；diff 场景检查 fallback decorations 和 unchanged overlay 是否在流式期间反复刷新。',
-    ))
-  }
-
-  if (isStream && wallMs / operations > 12) {
-    findings.push(makeFinding(
-      'stream-throughput',
-      result.name,
-      Math.min(1, (wallMs / operations) / 20),
-      {
-        operations,
-        wallMs,
-        msPerOperation: round(wallMs / operations),
-      },
-      'stream burst 吞吐偏低；端到端耗时已经超过输入节奏本身。',
-      '确认 append buffer 是否被 throttle 合并；避免每个 token 都触发 diff recompute、height sync 或 reveal。',
-    ))
-  }
-
-  return findings
 }
 
-function analyzeCrossScenario(byName) {
-  const findings = []
-  const cold = byName.get('editor-cold-first-highlight')
-  const warm = byName.get('editor-warm-first-highlight')
-  const editorUpdate = byName.get('editor-update-highlight')
-  const diffUpdate = byName.get('diff-update-highlight')
-  const editorStream = byName.get('editor-stream-burst')
-  const diffStream = byName.get('diff-stream-burst')
-  const diffCold = byName.get('diff-cold-first-highlight')
-
-  if (cold && warm) {
-    const r = ratio(p95(cold), p95(warm))
-    if (r > 3) {
-      findings.push(makeFinding(
-        'cold-start',
-        'editor-cold-first-highlight/editor-warm-first-highlight',
-        Math.min(1, r / 8),
-        {
-          coldP95Ms: p95(cold),
-          warmP95Ms: p95(warm),
-          coldToWarmRatio: r,
-        },
-        '冷启动明显慢于 warm path，主要成本应在 Shiki highlighter 创建、语言 grammar/theme 加载和 shikiToMonaco token provider patch。',
-        '发布前给 docs/API 明确推荐预热路径；性能门禁增加 defaultLanguages 冷启动场景，避免只测 4 个 languages 掩盖默认配置成本。',
-      ))
-    }
-  }
-
-  if (editorUpdate && diffUpdate) {
-    const r = ratio(p95(diffUpdate), p95(editorUpdate))
-    if (r > 1.8) {
-      findings.push(makeFinding(
-        'diff-overhead',
-        'diff-update-highlight/editor-update-highlight',
-        Math.min(1, r / 4),
-        {
-          diffUpdateP95Ms: p95(diffUpdate),
-          editorUpdateP95Ms: p95(editorUpdate),
-          ratio: r,
-        },
-        'diff 更新相比普通 editor 更新有明显额外成本，通常来自 diff recomputation、overlay/decorations 和 side-by-side layout。',
-        '对 diff update 分离 measurement：model apply、waitForDiff、presentation sync、height/reveal 各打 performance.mark；只对最终稳定帧刷新 overlay。',
-      ))
-    }
-  }
-
-  if (editorStream && diffStream) {
-    const r = ratio(wall(diffStream), wall(editorStream))
-    if (r > 1.4) {
-      findings.push(makeFinding(
-        'diff-stream-overhead',
-        'diff-stream-burst/editor-stream-burst',
-        Math.min(1, r / 3),
-        {
-          diffStreamWallMs: wall(diffStream),
-          editorStreamWallMs: wall(editorStream),
-          ratio: r,
-        },
-        'diff streaming 端到端成本高于普通 streaming；若同时 long task/heap 增长，优先怀疑完整字符串复制或 diff presentation 反复刷新。',
-        '修复 DiffEditorManager.flushAppendBufferDiff 中每个 chunk 后 model.getValue() 的 O(n²) 文档复制，并在流式期间降低 presentation overlay 刷新频率。',
-      ))
-    }
-  }
-
-  if (cold && diffCold) {
-    const r = ratio(p95(diffCold), p95(cold))
-    if (r > 1.4) {
-      findings.push(makeFinding(
-        'diff-cold-start',
-        'diff-cold-first-highlight/editor-cold-first-highlight',
-        Math.min(1, r / 3),
-        {
-          diffColdP95Ms: p95(diffCold),
-          editorColdP95Ms: p95(cold),
-          ratio: r,
-        },
-        'diff cold start 成本高于 editor cold start；除了 Shiki/Monaco 初始化，还有 diff editor 初始化和首次 diff 计算。',
-        '门禁中把 cold 场景隔离到新 page/context，否则前一个 editor 场景会污染 diff cold 的 highlighter/token provider 状态。',
-      ))
-    }
-  }
-
-  return findings
+function detectDominantBottleneck(result, metrics) {
+  const name = result.name
+  if (name.includes('cold') && metrics.p95Ms > 1000)
+    return 'cold-start-highlighter'
+  if (name.includes('diff') && metrics.stylePerOp >= 4)
+    return 'diff-dom-layout-churn'
+  if (metrics.layoutPerOp >= 2 || metrics.stylePerOp >= 4 || metrics.paintPerOp >= 4)
+    return 'layout-paint-churn'
+  if (metrics.scriptPerOpMs >= 3 && metrics.layoutPerOp < 1)
+    return 'tokenization-or-model-edit-cpu'
+  if (name.includes('stream') && metrics.longTasks > 0)
+    return 'streaming-batch-starvation'
+  if (metrics.maxLongTaskMs >= 80)
+    return 'main-thread-long-task'
+  return 'within-budget-or-no-clear-dominant-cost'
 }
 
-function toMarkdown(report, analysis) {
-  const rows = report.results.map((r) => {
-    return `| ${r.name} | ${r.operations || 1} | ${p95(r)} | ${max(r)} | ${wall(r)} | ${busy(r)} | ${longTasks(r)} | ${maxLongTask(r)} | ${timelinePerOp(r, 'Layout')} | ${timelinePerOp(r, 'UpdateLayoutTree') || timelinePerOp(r, 'RecalculateStyles')} | ${timelinePerOp(r, 'Paint')} |`
-  })
-  const findings = analysis.findings.map((f, i) => {
-    return [
-      `### ${i + 1}. [${f.severity}] ${f.kind} — ${f.scenario}`,
-      '',
-      `**Evidence:** \`${JSON.stringify(f.evidence)}\``,
-      '',
-      `**Diagnosis:** ${f.diagnosis}`,
-      '',
-      `**Action:** ${f.action}`,
-      '',
-    ].join('\n')
-  })
+function recommendationsFor(result, metrics, budget) {
+  const name = result.name
+  const recs = []
 
-  return [
-    '# stream-monaco performance analysis',
-    '',
-    `Generated from: \`${path.relative(root, inputPath)}\``,
-    `Entry: \`${report.entry || 'unknown'}\``,
-    '',
-    '## Scenario summary',
-    '',
-    '| scenario | ops | p95 ms | max ms | wall ms | busy | long tasks | max long task ms | layout/op | style/op | paint/op |',
-    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
-    ...rows,
-    '',
-    '## Findings',
-    '',
-    findings.length ? findings.join('\n') : 'No actionable bottleneck detected by the current heuristics.',
-    '',
-  ].join('\n')
+  if (name.includes('cold') && metrics.p95Ms > Math.min(budget.sampleP95Ms ?? Infinity, 1500)) {
+    recs.push({
+      priority: 'P0',
+      area: 'cold start',
+      action: '把 Shiki/Monaco theme+language 注册从 createEditor/createDiffEditor 的可见路径前移。对业务暴露 preload/warmup 示例，默认示例只传当前需要的 languages，不要使用全量 defaultLanguages。',
+      verify: 'editor-cold-first-highlight / diff-cold-first-highlight 的 p95、maxLongTaskMs、scriptDurationMs 应下降。',
+    })
+  }
+
+  if (name.includes('update') && metrics.scriptPerOpMs >= 3) {
+    recs.push({
+      priority: 'P0',
+      area: 'hot update CPU',
+      action: '区分 append、small replace、large replace 三类更新；append 场景优先走 appendCode/appendModified，非 append 只在文本规模低于 minimalEditMaxChars 时计算 minimal edit。',
+      verify: `${name} 的 scriptPerOpMs 和 sample p95 应下降，model 内容必须保持一致。`,
+    })
+  }
+
+  if (metrics.layoutPerOp >= (budget.layoutPerOperation ?? 2) || metrics.stylePerOp >= (budget.recalcStylePerOperation ?? 4)) {
+    recs.push({
+      priority: name.includes('diff') ? 'P0' : 'P1',
+      area: 'layout/style',
+      action: '把高度测量、scrollHeight/getLayoutInfo/getBoundingClientRect/readContainerLayoutSize 收敛到单个 RAF；同一轮 flush 内只 layout 一次，避免内容变化、height manager、scroll reveal 分别读写布局。',
+      verify: `${name} 的 Layout.perOperation、StyleRecalc.perOperation、layoutDurationMs 应下降。`,
+    })
+  }
+
+  if (name === 'diff-stream-burst') {
+    recs.push({
+      priority: 'P0',
+      area: 'diff streaming correctness/perf',
+      action: '修复大块 append 的 chunk 切分，必须逐字节/逐字符保持 totalText；避免每个 chunk 后 model.getValue() 造成 O(n²)。',
+      verify: '新增大块 append 回归：最终 modified value 与输入完全相等；diff-stream-burst scriptPerOpMs 下降。',
+    })
+  }
+
+  if (name.includes('stream') && metrics.maxLongTaskMs >= (budget.maxLongTaskMs ?? 120)) {
+    recs.push({
+      priority: 'P1',
+      area: 'scheduler',
+      action: '把单次 flush 的工作量切成时间预算片，例如 8-12ms 一个 chunk；chunk 间使用 RAF/yield，避免连续 applyEdits + reveal + height update 堵塞渲染。',
+      verify: `${name} 的 maxLongTaskMs 和 longTasks.count 应下降，wallMs 不应明显增加。`,
+    })
+  }
+
+  if (!recs.length) {
+    recs.push({
+      priority: 'P2',
+      area: 'guardrail',
+      action: '该场景当前没有明确瓶颈；保留 baseline 回归检测即可，不要为了局部指标牺牲稳定性。',
+      verify: 'baseline tolerance 内稳定。',
+    })
+  }
+
+  return recs
+}
+
+function analyzeScenario(result, budget) {
+  const metrics = getHotMetrics(result)
+  const statuses = [
+    metricScore(metrics.p95Ms, budget.sampleP95Ms),
+    metricScore(metrics.maxMs, budget.sampleMaxMs),
+    metricScore(metrics.wallMs, budget.wallMs),
+    metricScore(metrics.longTasks, budget.longTaskCount),
+    metricScore(metrics.maxLongTaskMs, budget.maxLongTaskMs),
+    metricScore(metrics.busyRatio, budget.mainThreadBusyRatio),
+    metricScore(metrics.layoutPerOp, budget.layoutPerOperation),
+    metricScore(metrics.stylePerOp, budget.recalcStylePerOperation),
+    metricScore(metrics.paintPerOp, budget.paintPerOperation),
+  ]
+  const bottleneck = detectDominantBottleneck(result, metrics)
+  return {
+    scenario: result.name,
+    status: maxStatus(statuses),
+    bottleneck,
+    metrics,
+    recommendations: recommendationsFor(result, metrics, budget),
+  }
+}
+
+function markdownTable(rows) {
+  const headers = ['scenario', 'status', 'bottleneck', 'p95', 'max', 'longTasks', 'task/op', 'script/op', 'layout/op', 'style/op', 'paint/op']
+  const lines = [
+    `| ${headers.join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+  ]
+  for (const row of rows) {
+    const m = row.metrics
+    lines.push(`| ${row.scenario} | ${row.status} | ${row.bottleneck} | ${round(m.p95Ms)}ms | ${round(m.maxMs)}ms | ${m.longTasks} | ${round(m.taskPerOpMs)}ms | ${round(m.scriptPerOpMs)}ms | ${round(m.layoutPerOp, 3)} | ${round(m.stylePerOp, 3)} | ${round(m.paintPerOp, 3)} |`)
+  }
+  return lines.join('\n')
+}
+
+function renderMarkdown(report, analyses) {
+  const lines = []
+  lines.push('# stream-monaco performance analysis')
+  lines.push('')
+  lines.push(`Generated from: \`${path.relative(root, reportPath)}\``)
+  lines.push(`Entry: \`${report.entry ?? 'unknown'}\``)
+  lines.push(`Generated at: \`${report.generatedAt ?? 'unknown'}\``)
+  lines.push('')
+  lines.push('## Scenario diagnosis')
+  lines.push('')
+  lines.push(markdownTable(analyses))
+  lines.push('')
+  lines.push('## Prioritized actions')
+  lines.push('')
+
+  const actions = []
+  for (const analysis of analyses) {
+    for (const rec of analysis.recommendations) {
+      actions.push({ scenario: analysis.scenario, ...rec })
+    }
+  }
+  const priorityWeight = { P0: 0, P1: 1, P2: 2 }
+  actions.sort((a, b) => (priorityWeight[a.priority] ?? 9) - (priorityWeight[b.priority] ?? 9))
+  for (const action of actions) {
+    lines.push(`### ${action.priority} · ${action.scenario} · ${action.area}`)
+    lines.push('')
+    lines.push(`- Action: ${action.action}`)
+    lines.push(`- Verify: ${action.verify}`)
+    lines.push('')
+  }
+
+  lines.push('## Reading guide')
+  lines.push('')
+  lines.push('- `task/op` 和 `script/op` 高：偏 CPU/tokenization/model edit。')
+  lines.push('- `layout/op`、`style/op`、`paint/op` 高：偏 DOM/layout/reveal/height manager。')
+  lines.push('- cold 场景慢而 warm 场景正常：优先做 preload/highlighter registration 前移。')
+  lines.push('- stream 场景 long task 高：优先做 chunk/yield 和 flush 预算。')
+  lines.push('')
+  return `${lines.join('\n')}\n`
 }
 
 async function main() {
-  const report = JSON.parse(await readFile(inputPath, 'utf8'))
-  const byName = new Map(report.results.map(r => [r.name, r]))
-  const scenarioFindings = report.results.flatMap(analyzeScenario)
-  const crossFindings = analyzeCrossScenario(byName)
-  const findings = [...scenarioFindings, ...crossFindings]
-    .sort((a, b) => b.score - a.score)
-  const analysis = {
-    generatedAt: new Date().toISOString(),
-    sourceReport: path.relative(root, inputPath),
-    findings,
-  }
-
-  await mkdir(perfDir, { recursive: true })
-  await writeFile(analysisJsonPath, `${JSON.stringify(analysis, null, 2)}\n`)
-  await writeFile(analysisMdPath, toMarkdown(report, analysis))
-  console.log(`Performance analysis written to ${path.relative(root, analysisMdPath)}`)
-  if (findings.length) {
-    console.log('\nTop findings:')
-    for (const finding of findings.slice(0, 5))
-      console.log(`- [${finding.severity}] ${finding.kind}: ${finding.scenario}`)
-  }
+  const report = await readJson(reportPath)
+  if (!report?.results?.length)
+    throw new Error(`No performance results found in ${reportPath}`)
+  const budget = await readJson(budgetPath, { scenarioBudgets: {} })
+  const analyses = report.results.map(result => analyzeScenario(result, getBudget(budget, result)))
+  await writeFile(jsonOutputPath, `${JSON.stringify({ generatedAt: new Date().toISOString(), analyses }, null, 2)}\n`)
+  await writeFile(outputPath, renderMarkdown(report, analyses))
+  console.log(`Performance analysis written to ${path.relative(root, outputPath)}`)
 }
 
 main().catch((err) => {

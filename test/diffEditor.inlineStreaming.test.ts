@@ -373,6 +373,34 @@ describe('DiffEditorManager inline streaming updates', () => {
     manager.cleanup()
   })
 
+  it('splits large append text without changing line endings or trailing text', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const text = Array.from(
+      { length: 220 },
+      (_, i) => `line-${i} ${'x'.repeat(24)}\r\n`,
+    ).join('') + 'tail without newline'
+    const chunks = manager.splitTextByLineChunks(text, 50)
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.join('')).toBe(text)
+    manager.cleanup()
+  })
+
+  it('chunks many buffered diff appends and preserves modified text', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const initial = 'line 1\nline 2\n'
+    const parts = Array.from({ length: 60 }, (_, i) => `\nline-${i}`)
+    const appendSpy = vi.spyOn(manager, 'appendToModel' as any)
+
+    manager.appendBufferModifiedDiff.push(...parts)
+    await manager.flushAppendBufferDiff()
+
+    const { modified } = manager.getDiffModels()
+    expect(appendSpy).toHaveBeenCalledTimes(parts.length)
+    expect(modified.getValue()).toBe(initial + parts.join(''))
+    manager.cleanup()
+  })
+
   it('flushes pending replacement updates before refreshing diff presentation', async () => {
     const manager = await createManager({ renderSideBySide: false })
     ;(manager as any).lastContainer.style.removeProperty = vi.fn()
