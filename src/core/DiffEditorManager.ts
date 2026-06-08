@@ -3825,6 +3825,10 @@ export class DiffEditorManager {
       this.cancelScheduledHideDiffHunkActions())
     this.createDomDisposable(this.diffHunkDisposables, this.diffHunkLowerNode, 'mouseleave', () =>
       this.scheduleHideDiffHunkActions())
+    this.createDomDisposable(this.diffHunkDisposables, this.diffHunkUpperNode, 'wheel', event =>
+      this.handleDiffHunkWheel(event as WheelEvent, 'upper'))
+    this.createDomDisposable(this.diffHunkDisposables, this.diffHunkLowerNode, 'wheel', event =>
+      this.handleDiffHunkWheel(event as WheelEvent, 'lower'))
     overlay.append(this.diffHunkUpperNode, this.diffHunkLowerNode)
 
     const originalEditor = this.diffEditorView.getOriginalEditor()
@@ -3864,6 +3868,23 @@ export class DiffEditorManager {
       }),
     )
     this.diffHunkLineChanges = this.getEffectiveLineChanges()
+  }
+
+  private handleDiffHunkWheel(event: WheelEvent, side: DiffHunkSide) {
+    if (Math.abs(event.deltaX) < 0.5 && Math.abs(event.deltaY) < 0.5)
+      return
+    if (!this.diffEditorView)
+      return
+
+    const editor = this.isDiffInlineMode() || side === 'lower'
+      ? this.diffEditorView.getModifiedEditor()
+      : this.diffEditorView.getOriginalEditor()
+
+    event.preventDefault()
+    event.stopPropagation()
+    editor.setScrollLeft?.((editor.getScrollLeft?.() ?? 0) + event.deltaX)
+    editor.setScrollTop?.((editor.getScrollTop?.() ?? 0) + event.deltaY)
+    this.hideDiffHunkActions()
   }
 
   private cancelScheduledHideDiffHunkActions() {

@@ -130,6 +130,54 @@ function createPresentationHarness(
 }
 
 describe('DiffEditorManager diff presentation', () => {
+  it('forwards hunk action wheel scrolling to the inline modified editor', () => {
+    const manager = new DiffEditorManager(
+      { readOnly: true } as any,
+      600,
+      '600px',
+      true,
+      true,
+      32,
+      2,
+      true,
+      75,
+    )
+    const originalEditor = {
+      getScrollLeft: vi.fn(() => 10),
+      getScrollTop: vi.fn(() => 20),
+      setScrollLeft: vi.fn(),
+      setScrollTop: vi.fn(),
+    }
+    const modifiedEditor = {
+      getScrollLeft: vi.fn(() => 30),
+      getScrollTop: vi.fn(() => 40),
+      setScrollLeft: vi.fn(),
+      setScrollTop: vi.fn(),
+    }
+    const event = {
+      deltaX: 12,
+      deltaY: -5,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    }
+
+    ;(manager as any).diffEditorView = {
+      getOriginalEditor: () => originalEditor,
+      getModifiedEditor: () => modifiedEditor,
+    }
+    ;(manager as any).isDiffInlineMode = () => true
+    ;(manager as any).hideDiffHunkActions = vi.fn()
+
+    ;(manager as any).handleDiffHunkWheel(event, 'upper')
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1)
+    expect(modifiedEditor.setScrollLeft).toHaveBeenCalledWith(42)
+    expect(modifiedEditor.setScrollTop).toHaveBeenCalledWith(35)
+    expect(originalEditor.setScrollLeft).not.toHaveBeenCalled()
+    expect((manager as any).hideDiffHunkActions).toHaveBeenCalledTimes(1)
+  })
+
   it('forces glyph margin when unchanged-region folding is enabled', () => {
     const manager = new DiffEditorManager(
       { readOnly: true, glyphMargin: false } as any,
