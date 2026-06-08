@@ -116,9 +116,13 @@ jobs:
       - name: Performance gate
         run: pnpm perf:gate
 
+      - name: Analyze performance report
+        if: always()
+        run: pnpm perf:analyze || true
+
       - name: Upload performance report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stream-monaco-performance-report
-          path: .perf/*.json
+          path: .perf/*

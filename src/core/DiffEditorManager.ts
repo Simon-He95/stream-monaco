@@ -5469,12 +5469,7 @@ export class DiffEditorManager {
     // If we received a single very large chunk, split it by lines into smaller
     // chunks so the editor can render and scroll progressively.
     if (parts.length === 1 && totalChars > 5000) {
-      const lines = totalText.split(/\r?\n/)
-      const chunkSize = 200
-      const chunks: string[] = []
-      for (let i = 0; i < lines.length; i += chunkSize) {
-        chunks.push(`${lines.slice(i, i + chunkSize).join('\n')}\n`)
-      }
+      const chunks = this.splitTextByLineChunks(totalText, 200)
       if (chunks.length > 1) {
         parts = chunks
       }
@@ -5522,19 +5517,8 @@ export class DiffEditorManager {
           partLen: part.length,
           prevLine,
         })
-        const lastColumn = model.getLineMaxColumn(prevLine)
-        const range = new monaco.Range(
-          prevLine,
-          lastColumn,
-          prevLine,
-          lastColumn,
-        )
         this.preserveNativeDiffDecorationsOnStaleAppend = true
-        this.runAsProgrammaticModifiedContentChange(() => {
-          model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
-        })
-        // update lastKnownModifiedCode lazily based on model value to avoid drift
-        this.lastKnownModifiedCode = model.getValue()
+        this.appendToModel(model, part)
         const newLine = model.getLineCount()
         this.lastKnownModifiedLineCount = newLine
         // try to let the editor update layout before scheduling reveal/scroll
@@ -5581,14 +5565,8 @@ export class DiffEditorManager {
     const text = totalText
     this.appendBufferModifiedDiff.length = 0
     prevLine = model.getLineCount()
-    const lastColumn = model.getLineMaxColumn(prevLine)
-    const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
     this.preserveNativeDiffDecorationsOnStaleAppend = true
-    this.runAsProgrammaticModifiedContentChange(() => {
-      model.applyEdits([{ range, text, forceMoveMarkers: true }])
-    })
-    // update lastKnownModifiedCode lazily based on model value to avoid drift
-    this.lastKnownModifiedCode = model.getValue()
+    this.appendToModel(model, text)
 
     const newLine = model.getLineCount()
     // keep internal line count cache in sync
@@ -5669,9 +5647,83 @@ export class DiffEditorManager {
     }
   }
 
+  private splitTextByLineChunks(text: string, chunkLineCount: number) {
+    // Preserve exact text; split/join would add trailing newlines and normalize CRLF.
+    const parts
+      = text.match(/[^\r\n]*(?:\r\n|\r|\n|$)/g)?.filter(Boolean) ?? [text]
+    if (parts.length <= chunkLineCount)
+      return [text]
+
+    const chunks: string[] = []
+    for (let i = 0; i < parts.length; i += chunkLineCount)
+      chunks.push(parts.slice(i, i + chunkLineCount).join(''))
+    return chunks
+  }
+
+  private getModelValueLength(model: monaco.editor.ITextModel) {
+    const getValueLength = (model as any).getValueLength
+    if (typeof getValueLength === 'function') {
+      try {
+        return getValueLength.call(model) as number
+      }
+      catch {}
+    }
+    return model.getValue().length
+  }
+
+  private mergeKnownAppend(
+    known: string | null,
+    appendText: string,
+    previousLength: number,
+    model: monaco.editor.ITextModel,
+  ) {
+    if (known == null)
+      return model.getValue()
+
+    const nextLength = previousLength + appendText.length
+
+    if (known.length === previousLength)
+      return known + appendText
+
+    if (
+      known.length >= nextLength
+      && known.slice(previousLength, nextLength) === appendText
+    ) {
+      return known
+    }
+
+    return model.getValue()
+  }
+
+  private syncKnownCodeAfterAppend(
+    model: monaco.editor.ITextModel,
+    appendText: string,
+    previousLength: number,
+  ) {
+    if (model === this.originalModel) {
+      this.lastKnownOriginalCode = this.mergeKnownAppend(
+        this.lastKnownOriginalCode,
+        appendText,
+        previousLength,
+        model,
+      )
+      return
+    }
+
+    if (model === this.modifiedModel) {
+      this.lastKnownModifiedCode = this.mergeKnownAppend(
+        this.lastKnownModifiedCode,
+        appendText,
+        previousLength,
+        model,
+      )
+    }
+  }
+
   private appendToModel(model: monaco.editor.ITextModel, appendText: string) {
     if (!appendText)
       return
+    const previousLength = this.getModelValueLength(model)
     const lastLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
@@ -5681,6 +5733,7 @@ export class DiffEditorManager {
     if (model === this.modifiedModel) {
       this.lastKnownModifiedLineCount = model.getLineCount()
     }
+    this.syncKnownCodeAfterAppend(model, appendText, previousLength)
   }
 
   private applyModelEdit(model: monaco.editor.ITextModel, fn: () => void) {

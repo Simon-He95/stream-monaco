@@ -290,8 +290,22 @@ function baseOptions(extra: any = {}) {
 
 async function runEditorFirstHighlight(cold: boolean) {
   resetRoot()
-  if (cold)
-    clearHighlighterCache()
+  clearHighlighterCache()
+
+  // Keep warm measurement local to this scenario; other scenarios run isolated.
+  if (!cold) {
+    const primer = createContainer('editor-warm-primer')
+    const primerApi = useMonaco(baseOptions({ updateThrottleMs: 0 }))
+    await primerApi.createEditor(
+      primer,
+      makeTsCode(40, 'SM_WARM_PRIMER'),
+      'typescript',
+    )
+    await waitForHighlight(primer, 'SM_WARM_PRIMER')
+    primerApi.cleanupEditor()
+    resetRoot()
+  }
+
   const longTasks = observeLongTasks()
   const container = createContainer(cold ? 'editor-cold' : 'editor-warm')
   const api = useMonaco(baseOptions({ updateThrottleMs: 0, autoScrollInitial: false }))
@@ -359,13 +373,15 @@ async function runEditorStreamBurst() {
   await waitForHighlight(container, 'SM_BURST_BASE')
   const start = performance.now()
   const operations = 500
+  let finalMarker = 'SM_BURST_BASE'
   for (let i = 0; i < operations; i++) {
-    code += \`console.log("SM_BURST_\${i}", \${i})\\n\`
+    finalMarker = \`SM_BURST_\${i}\`
+    code += \`console.log("\${finalMarker}", \${i})\\n\`
     api.updateCode(code, 'typescript')
     await sleep(5)
   }
   await waitUntil(() => api.getEditorView()?.getModel()?.getValue() === code, 10000, 'editor burst final model')
-  await waitForHighlight(container, 'SM_BURST_499', 4000)
+  await waitForHighlight(container, finalMarker, 4000)
   await sleep(250)
   const wallMs = performance.now() - start
   api.cleanupEditor()
@@ -449,14 +465,16 @@ async function runDiffStreamBurst() {
   await waitForHighlight(container, 'SM_DIFF_BURST_M')
   const start = performance.now()
   const operations = 500
+  let finalMarker = 'SM_DIFF_BURST_M'
   for (let i = 0; i < operations; i++) {
-    const text = \`\\nconsole.log("SM_DIFF_BURST_\${i}", \${i})\`
+    finalMarker = \`SM_DIFF_BURST_\${i}\`
+    const text = \`\\nconsole.log("\${finalMarker}", \${i})\`
     modified += text
     api.appendModified(text, 'typescript')
     await sleep(5)
   }
   await waitUntil(() => api.getDiffModels().modified?.getValue() === modified, 12000, 'diff burst final model')
-  await waitForHighlight(container, 'SM_DIFF_BURST_499', 4000)
+  await waitForHighlight(container, finalMarker, 4000)
   await sleep(300)
   const wallMs = performance.now() - start
   api.cleanupEditor()
@@ -685,22 +703,29 @@ async function main() {
       '--disable-renderer-backgrounding',
     ],
   })
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
-  const page = await context.newPage()
-  const client = await context.newCDPSession(page)
   const url = new URL('/scripts/.perf-app/index.html', baseUrl).toString()
   const results = []
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle' })
     for (const scenario of SCENARIOS) {
       for (let i = 0; i < repeat; i++) {
         const name = repeat > 1 ? `${scenario}#${i + 1}` : scenario
         console.log(`Running ${name} (${entry})`)
-        const result = await runScenario(page, client, scenario)
-        if (repeat > 1)
-          result.repeatIndex = i + 1
-        results.push(result)
+
+        // Isolate Monaco/Shiki globals and CDP metrics between scenario runs.
+        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+        const page = await context.newPage()
+        const client = await context.newCDPSession(page)
+        try {
+          await page.goto(url, { waitUntil: 'networkidle' })
+          const result = await runScenario(page, client, scenario)
+          if (repeat > 1)
+            result.repeatIndex = i + 1
+          results.push(result)
+        }
+        finally {
+          await context.close().catch(() => {})
+        }
       }
     }
   }
