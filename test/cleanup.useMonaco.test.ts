@@ -286,6 +286,30 @@ describe('useMonaco create lifecycle', () => {
     )
   })
 
+  it('registers only the requested create language when languages are not explicit', async () => {
+    const { api, registerCalls } = await loadUseMonacoHarness({ languages: undefined })
+    const createPromise = api.createEditor({} as HTMLElement, 'code', 'typescript')
+
+    expect(registerCalls).toHaveLength(1)
+    expect(registerCalls[0].languages).toEqual(['typescript'])
+
+    registerCalls[0].deferred.resolve(null)
+    await createPromise
+  })
+
+  it('keeps explicit languages preloaded during create', async () => {
+    const { api, registerCalls } = await loadUseMonacoHarness({
+      languages: ['javascript', 'json'],
+    })
+    const createPromise = api.createEditor({} as HTMLElement, 'code', 'typescript')
+
+    expect(registerCalls).toHaveLength(1)
+    expect(registerCalls[0].languages).toEqual(['javascript', 'json', 'typescript'])
+
+    registerCalls[0].deferred.resolve(null)
+    await createPromise
+  })
+
   it('safeClean does not cancel an in-flight create and cleanupEditor disposes committed resources', async () => {
     const dispose = vi.fn()
     const { api, registerCalls, editorManagers } = await loadUseMonacoHarness({

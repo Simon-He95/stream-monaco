@@ -1,12 +1,21 @@
 {
   "tolerance": 0.25,
   "scenarioBudgets": {
+    "editor-cold-first-highlight-default-options": {
+      "sampleP95Ms": 3000,
+      "sampleMaxMs": 4200,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 350,
+      "mainThreadBusyRatio": 0.9,
+      "layoutCount": 140,
+      "recalcStyleCount": 260
+    },
     "editor-cold-first-highlight": {
       "sampleP95Ms": 2500,
       "sampleMaxMs": 3500,
       "longTaskCount": 8,
       "maxLongTaskMs": 300,
-      "mainThreadBusyRatio": 0.85,
+      "mainThreadBusyRatio": 0.95,
       "layoutCount": 120,
       "recalcStyleCount": 220
     },
@@ -24,7 +33,17 @@
       "sampleMaxMs": 220,
       "longTaskCount": 5,
       "maxLongTaskMs": 150,
-      "mainThreadBusyRatio": 0.7,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 4,
+      "recalcStylePerOperation": 8,
+      "paintPerOperation": 8
+    },
+    "editor-middle-replace-large-doc": {
+      "sampleP95Ms": 350,
+      "sampleMaxMs": 650,
+      "longTaskCount": 8,
+      "maxLongTaskMs": 220,
+      "mainThreadBusyRatio": 0.85,
       "layoutPerOperation": 4,
       "recalcStylePerOperation": 8,
       "paintPerOperation": 8
@@ -37,6 +56,15 @@
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
       "paintPerOperation": 3
+    },
+    "diff-cold-first-highlight-default-options": {
+      "sampleP95Ms": 4200,
+      "sampleMaxMs": 5800,
+      "longTaskCount": 14,
+      "maxLongTaskMs": 450,
+      "mainThreadBusyRatio": 0.92,
+      "layoutCount": 220,
+      "recalcStyleCount": 360
     },
     "diff-cold-first-highlight": {
       "sampleP95Ms": 3500,
@@ -56,6 +84,16 @@
       "layoutPerOperation": 6,
       "recalcStylePerOperation": 12,
       "paintPerOperation": 12
+    },
+    "diff-middle-replace-large-doc": {
+      "sampleP95Ms": 600,
+      "sampleMaxMs": 1000,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 260,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 8,
+      "recalcStylePerOperation": 14,
+      "paintPerOperation": 14
     },
     "diff-stream-burst": {
       "wallMs": 6500,

@@ -7,7 +7,7 @@ import type {
   UseMonacoReturn,
 } from './type'
 
-import { detectLanguage } from './code.detect'
+import { detectLanguage, processedLanguage } from './code.detect'
 import {
   defaultLanguages,
   defaultRevealDebounceMs,
@@ -144,7 +144,8 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
       'Monaco themes must be an array with at least two themes: [darkTheme, lightTheme]',
     )
   }
-  const languages = monacoOptions.languages ?? defaultLanguages
+  const explicitLanguages = monacoOptions.languages
+  const languages = explicitLanguages ?? defaultLanguages
   const MAX_HEIGHT = monacoOptions.MAX_HEIGHT ?? 500
   const autoScrollOnUpdate = monacoOptions.autoScrollOnUpdate ?? true
   const autoScrollInitial = monacoOptions.autoScrollInitial ?? true
@@ -324,14 +325,38 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     }
   }
 
-  async function ensureThemeRegistered(themeName: string) {
+  function normalizeLanguage(language: string | undefined | null) {
+    if (!language)
+      return null
+    return processedLanguage(language) || language
+  }
+
+  function resolveCreateLanguages(primaryLanguage?: string) {
+    const primary = normalizeLanguage(primaryLanguage)
+
+    if (Array.isArray(explicitLanguages) && explicitLanguages.length) {
+      const set = new Set<string>()
+      for (const language of explicitLanguages) {
+        const normalized = normalizeLanguage(language)
+        if (normalized)
+          set.add(normalized)
+      }
+      if (primary)
+        set.add(primary)
+      return Array.from(set)
+    }
+
+    return primary ? [primary] : ['typescript']
+  }
+
+  async function ensureThemeRegistered(themeName: string, requestedLanguages = languages) {
     const availableNames = themes.map(t =>
       typeof t === 'string' ? t : (t as any).name,
     )
     const list = availableNames.includes(themeName)
       ? themes
       : (themes.concat(themeName) as any)
-    await registerMonacoThemes(list as any, languages)
+    await registerMonacoThemes(list as any, requestedLanguages)
   }
 
   function resolveRequestedThemeName() {
@@ -459,11 +484,13 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
   async function resolveCreateThemeName(
     requestId: number,
     kind: 'editor' | 'diff',
+    primaryLanguage?: string,
   ) {
     let themeName = resolveRequestedThemeName()
+    const createLanguages = resolveCreateLanguages(primaryLanguage)
     while (true) {
       assertCreateStillActive(requestId, kind)
-      await ensureThemeRegistered(themeName)
+      await ensureThemeRegistered(themeName, createLanguages)
       assertCreateStillActive(requestId, kind)
       const latestThemeName = resolveRequestedThemeName()
       if (latestThemeName === themeName)
@@ -496,7 +523,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     let nextEditorMgr: EditorManager | null = null
 
     try {
-      const initialThemeName = await resolveCreateThemeName(requestId, 'editor')
+      const initialThemeName = await resolveCreateThemeName(requestId, 'editor', language)
       nextEditorMgr = new EditorManager(
         monacoOptions,
         maxHeightValue,
@@ -584,7 +611,7 @@ function useMonaco(monacoOptions: MonacoOptions = {}): UseMonacoReturn {
     let nextDiffMgr: DiffEditorManager | null = null
 
     try {
-      const initialThemeName = await resolveCreateThemeName(requestId, 'diff')
+      const initialThemeName = await resolveCreateThemeName(requestId, 'diff', language)
       nextDiffMgr = new DiffEditorManager(
         monacoOptions,
         maxHeightValue,
