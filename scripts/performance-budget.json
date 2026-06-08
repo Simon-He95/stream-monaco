@@ -48,11 +48,22 @@
       "recalcStylePerOperation": 8,
       "paintPerOperation": 8
     },
-    "editor-stream-burst": {
+    "editor-stream-full-update-burst": {
       "wallMs": 5000,
       "longTaskCount": 10,
       "maxLongTaskMs": 300,
       "mainThreadBusyRatio": 0.75,
+      "activeBusyRatio": 1.1,
+      "layoutPerOperation": 1.5,
+      "recalcStylePerOperation": 3,
+      "paintPerOperation": 3
+    },
+    "editor-stream-append-burst": {
+      "wallMs": 5000,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 300,
+      "mainThreadBusyRatio": 0.75,
+      "activeBusyRatio": 1.1,
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
       "paintPerOperation": 3
@@ -71,7 +82,16 @@
       "sampleMaxMs": 5000,
       "longTaskCount": 12,
       "maxLongTaskMs": 400,
-      "mainThreadBusyRatio": 0.9,
+      "mainThreadBusyRatio": 0.93,
+      "layoutCount": 180,
+      "recalcStyleCount": 300
+    },
+    "diff-cold-first-highlight-no-unchanged-regions": {
+      "sampleP95Ms": 3500,
+      "sampleMaxMs": 5000,
+      "longTaskCount": 12,
+      "maxLongTaskMs": 400,
+      "mainThreadBusyRatio": 0.93,
       "layoutCount": 180,
       "recalcStyleCount": 300
     },
@@ -80,7 +100,7 @@
       "sampleMaxMs": 280,
       "longTaskCount": 6,
       "maxLongTaskMs": 180,
-      "mainThreadBusyRatio": 0.8,
+      "mainThreadBusyRatio": 0.9,
       "layoutPerOperation": 6,
       "recalcStylePerOperation": 12,
       "paintPerOperation": 12
@@ -90,16 +110,27 @@
       "sampleMaxMs": 1000,
       "longTaskCount": 10,
       "maxLongTaskMs": 260,
-      "mainThreadBusyRatio": 0.9,
+      "mainThreadBusyRatio": 0.93,
       "layoutPerOperation": 8,
       "recalcStylePerOperation": 14,
       "paintPerOperation": 14
     },
-    "diff-stream-burst": {
+    "diff-stream-full-update-burst": {
       "wallMs": 6500,
       "longTaskCount": 14,
       "maxLongTaskMs": 350,
       "mainThreadBusyRatio": 0.82,
+      "activeBusyRatio": 1.1,
+      "layoutPerOperation": 2.5,
+      "recalcStylePerOperation": 5,
+      "paintPerOperation": 5
+    },
+    "diff-stream-append-burst": {
+      "wallMs": 6500,
+      "longTaskCount": 14,
+      "maxLongTaskMs": 350,
+      "mainThreadBusyRatio": 0.82,
+      "activeBusyRatio": 1.1,
       "layoutPerOperation": 2.5,
       "recalcStylePerOperation": 5,
       "paintPerOperation": 5

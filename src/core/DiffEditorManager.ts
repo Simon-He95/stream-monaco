@@ -4331,18 +4331,19 @@ export class DiffEditorManager {
       })
       if (!this.diffEditorView)
         return
-      const hasV = this.hasVerticalScrollbarModified()
-      log('diff', 'hasVerticalScrollbarModified ->', hasV)
       if (
         !(
           this.diffAutoScroll
           && this.autoScrollOnUpdate
           && this.shouldAutoScrollDiff
-          && hasV
         )
       ) {
         return
       }
+      const hasV = this.hasVerticalScrollbarModified()
+      log('diff', 'hasVerticalScrollbarModified ->', hasV)
+      if (!hasV)
+        return
       const me = this.diffEditorView.getModifiedEditor()
       const model = me.getModel()
       const currentLine = model?.getLineCount() ?? 1
@@ -4631,6 +4632,7 @@ export class DiffEditorManager {
     }
     this.diffHeightManager = createHeightManager(container, () =>
       this.computedHeight())
+
     this.diffHeightManager.update()
 
     // If the initial computed height already reaches (or is very near) the
@@ -4654,7 +4656,7 @@ export class DiffEditorManager {
     this.diffPresentationDisposables.push(
       this.diffEditorView.onDidUpdateDiff(() => {
         this.diffComputedVersions = this.captureCurrentDiffVersions()
-        this.syncDiffEditorLayoutToContainer()
+        this.scheduleSyncDiffEditorLayoutToContainer()
         this.scheduleSyncDiffPresentationDecorations()
       }),
     )
@@ -4939,6 +4941,7 @@ export class DiffEditorManager {
   updateModified(newCode: string, codeLanguage?: string) {
     if (!this.diffEditorView || !this.modifiedModel)
       return
+    this.syncLastKnownModified()
     if (codeLanguage) {
       const lang = processedLanguage(codeLanguage)
       if (lang && this.modifiedModel.getLanguageId() !== lang)
@@ -4958,7 +4961,7 @@ export class DiffEditorManager {
       // If we have buffered appends, apply them first so the model matches the
       // optimistic lastKnownModifiedCode before computing a minimal edit.
       this.flushModifiedAppendBufferSync()
-      const prevAfterFlush = this.modifiedModel.getValue()
+      const prevAfterFlush = this.lastKnownModifiedCode ?? this.modifiedModel.getValue()
       const prevLine = this.modifiedModel.getLineCount()
       this.applyMinimalEditToModel(this.modifiedModel, prevAfterFlush, newCode)
       const newLine = this.modifiedModel.getLineCount()
@@ -5326,6 +5329,7 @@ export class DiffEditorManager {
 
     const { original, modified, lang } = this.pendingDiffUpdate
     this.pendingDiffUpdate = null
+    this.syncLastKnownModified()
 
     // Ensure models match any buffered streaming appends before applying minimal
     // edits or non-prefix updates, otherwise ranges can be computed against an
@@ -5363,7 +5367,7 @@ export class DiffEditorManager {
       this.lastKnownOriginalCode = original
     }
 
-    const prevM = m.getValue()
+    const prevM = this.lastKnownModifiedCode!
     const prevMLineCount = m.getLineCount()
     const modifiedTailAppend
       = prevM !== modified

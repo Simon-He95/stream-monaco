@@ -140,6 +140,7 @@ async function loadUseMonaco() {
         const scrollListeners = new Set<(e: any) => void>()
         let scrollTop = 0
         let contentHeightOverride: number | null = null
+        let getLayoutInfoCallCount = 0
         const domNode = {
           addEventListener() {},
           removeEventListener() {},
@@ -160,6 +161,7 @@ async function loadUseMonaco() {
             return undefined
           },
           getLayoutInfo() {
+            getLayoutInfoCallCount += 1
             return { height: 240 }
           },
           getScrollTop() {
@@ -203,6 +205,9 @@ async function loadUseMonaco() {
           },
           __setContentHeight(next: number) {
             contentHeightOverride = next
+          },
+          __getLayoutInfoCallCount() {
+            return getLayoutInfoCallCount
           },
         }
         lastCreatedEditor = editorApi
@@ -309,6 +314,32 @@ describe('EditorManager update throttling', () => {
     expect(monaco.getCode()).toBe('ab')
   })
 
+  it('respects updateThrottleMs for explicit appendCode streaming', async () => {
+    const { useMonaco } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['javascript'],
+      readOnly: true,
+      updateThrottleMs: 50,
+    })
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, '', 'javascript')
+    await vi.runAllTimersAsync()
+
+    monaco.appendCode('a', 'javascript')
+    await vi.runAllTimersAsync()
+    expect(monaco.getCode()).toBe('a')
+
+    monaco.appendCode('b', 'javascript')
+    monaco.appendCode('c', 'javascript')
+    await vi.advanceTimersByTimeAsync(20)
+    expect(monaco.getCode()).toBe('a')
+
+    await vi.advanceTimersByTimeAsync(40)
+    expect(monaco.getCode()).toBe('abc')
+  })
+
   it('avoids rereading the whole model during programmatic streaming appends', async () => {
     const { useMonaco, __getLastModel } = await loadUseMonaco()
     const monaco = useMonaco({
@@ -388,6 +419,30 @@ describe('EditorManager update throttling', () => {
       await vi.runAllTimersAsync()
     }
 
+    expect(editor.revealLine).not.toHaveBeenCalled()
+    expect(editor.revealLineInCenter).not.toHaveBeenCalled()
+    expect(editor.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled()
+  })
+
+  it('does not measure scrollbar after create when initial auto-scroll is disabled', async () => {
+    const { useMonaco, __getLastEditor } = await loadUseMonaco()
+    const monaco = useMonaco({
+      themes: ['vitesse-dark', 'vitesse-light'],
+      languages: ['json'],
+      readOnly: true,
+      autoScrollInitial: false,
+      updateThrottleMs: 0,
+    })
+    const code = Array.from({ length: 30 }, (_, index) => `"line${index}"`).join('\n')
+
+    const container = { style: {}, innerHTML: '' } as any
+    await monaco.createEditor(container, code, 'json')
+
+    const editor = __getLastEditor()
+    const beforeFlush = editor.__getLayoutInfoCallCount()
+    await vi.runAllTimersAsync()
+
+    expect(editor.__getLayoutInfoCallCount()).toBe(beforeFlush)
     expect(editor.revealLine).not.toHaveBeenCalled()
     expect(editor.revealLineInCenter).not.toHaveBeenCalled()
     expect(editor.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled()

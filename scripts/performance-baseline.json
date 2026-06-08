@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-08T13:48:40.117Z",
+  "generatedAt": "2026-06-08T15:21:56.777Z",
   "entry": "dist",
   "scenarios": [
     "editor-cold-first-highlight-default-options",
@@ -7,12 +7,15 @@
     "editor-warm-first-highlight",
     "editor-update-highlight",
     "editor-middle-replace-large-doc",
-    "editor-stream-burst",
+    "editor-stream-full-update-burst",
+    "editor-stream-append-burst",
     "diff-cold-first-highlight-default-options",
     "diff-cold-first-highlight",
+    "diff-cold-first-highlight-no-unchanged-regions",
     "diff-update-highlight",
     "diff-middle-replace-large-doc",
-    "diff-stream-burst"
+    "diff-stream-full-update-burst",
+    "diff-stream-append-burst"
   ],
   "repeat": 1,
   "results": [
@@ -21,45 +24,50 @@
       "entry": "dist",
       "operations": 1,
       "samples": [
-        323.30000001192093
+        332.2000000476837
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 323.3,
-        "p50": 323.3,
-        "p75": 323.3,
-        "p95": 323.3,
-        "p99": 323.3,
-        "max": 323.3,
-        "avg": 323.3
+        "min": 332.2,
+        "p50": 332.2,
+        "p75": 332.2,
+        "p95": 332.2,
+        "p99": 332.2,
+        "max": 332.2,
+        "avg": 332.2
+      },
+      "phases": {
+        "createMs": 124,
+        "highlightAfterCreateMs": 208.2,
+        "totalMs": 332.2
       },
       "chars": 26799,
       "lines": 323,
       "longTasks": {
         "count": 3,
-        "maxMs": 71,
-        "totalMs": 200
+        "maxMs": 77,
+        "totalMs": 207
       },
       "cdp": {
-        "wallMs": 410,
-        "taskDurationMs": 325.84,
-        "scriptDurationMs": 207.55,
-        "layoutDurationMs": 30.05,
-        "recalcStyleDurationMs": 7.42,
+        "wallMs": 419,
+        "taskDurationMs": 338.17,
+        "scriptDurationMs": 212.95,
+        "layoutDurationMs": 32.33,
+        "recalcStyleDurationMs": 8.23,
         "layoutCount": 12,
         "recalcStyleCount": 15,
-        "jsHeapUsedDeltaMB": 1.28,
-        "mainThreadBusyRatio": 0.7947
+        "jsHeapUsedDeltaMB": 1.47,
+        "mainThreadBusyRatio": 0.8071
       },
       "timeline": {
         "Layout": {
           "count": 12,
-          "durationMs": 29.94,
+          "durationMs": 32.2,
           "perOperation": 12
         },
         "UpdateLayoutTree": {
           "count": 15,
-          "durationMs": 7.43,
+          "durationMs": 8.22,
           "perOperation": 15
         },
         "RecalculateStyles": {
@@ -69,7 +77,7 @@
         },
         "Paint": {
           "count": 24,
-          "durationMs": 1.85,
+          "durationMs": 1.82,
           "perOperation": 24
         },
         "CompositeLayers": {
@@ -78,9 +86,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 34,
-          "durationMs": 177.45,
-          "perOperation": 34
+          "count": 37,
+          "durationMs": 183.2,
+          "perOperation": 37
         },
         "EvaluateScript": {
           "count": 0,
@@ -98,12 +106,12 @@
           "Compare the default-options and narrow-languages cold scenarios before changing hard budgets."
         ],
         "debug": {
-          "p95": 323.3,
-          "max": 323.3,
-          "wallMs": 410,
-          "busy": 0.7947,
-          "taskMs": 325.84,
-          "scriptMs": 207.55,
+          "p95": 332.2,
+          "max": 332.2,
+          "wallMs": 419,
+          "busy": 0.8071,
+          "taskMs": 338.17,
+          "scriptMs": 212.95,
           "layoutCount": 12,
           "recalcStyleCount": 15,
           "layoutPerOp": 12,
@@ -118,45 +126,50 @@
       "entry": "dist",
       "operations": 1,
       "samples": [
-        236.60000002384186
+        224
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 236.6,
-        "p50": 236.6,
-        "p75": 236.6,
-        "p95": 236.6,
-        "p99": 236.6,
-        "max": 236.6,
-        "avg": 236.6
+        "min": 224,
+        "p50": 224,
+        "p75": 224,
+        "p95": 224,
+        "p99": 224,
+        "max": 224,
+        "avg": 224
+      },
+      "phases": {
+        "createMs": 121.8,
+        "highlightAfterCreateMs": 102.2,
+        "totalMs": 224
       },
       "chars": 26754,
       "lines": 322,
       "longTasks": {
         "count": 2,
-        "maxMs": 72,
-        "totalMs": 132
+        "maxMs": 77,
+        "totalMs": 142
       },
       "cdp": {
-        "wallMs": 328,
-        "taskDurationMs": 298.77,
-        "scriptDurationMs": 186.88,
-        "layoutDurationMs": 27.4,
-        "recalcStyleDurationMs": 3.42,
+        "wallMs": 275,
+        "taskDurationMs": 249.88,
+        "scriptDurationMs": 134.71,
+        "layoutDurationMs": 31.03,
+        "recalcStyleDurationMs": 3.04,
         "layoutCount": 9,
         "recalcStyleCount": 9,
-        "jsHeapUsedDeltaMB": 1.39,
-        "mainThreadBusyRatio": 0.9109
+        "jsHeapUsedDeltaMB": 1.48,
+        "mainThreadBusyRatio": 0.9087
       },
       "timeline": {
         "Layout": {
           "count": 9,
-          "durationMs": 27.27,
+          "durationMs": 30.93,
           "perOperation": 9
         },
         "UpdateLayoutTree": {
           "count": 9,
-          "durationMs": 3.43,
+          "durationMs": 3.04,
           "perOperation": 9
         },
         "RecalculateStyles": {
@@ -166,7 +179,7 @@
         },
         "Paint": {
           "count": 16,
-          "durationMs": 0.38,
+          "durationMs": 0.58,
           "perOperation": 16
         },
         "CompositeLayers": {
@@ -175,9 +188,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 25,
-          "durationMs": 152.61,
-          "perOperation": 25
+          "count": 24,
+          "durationMs": 102.73,
+          "perOperation": 24
         },
         "EvaluateScript": {
           "count": 0,
@@ -186,28 +199,21 @@
         }
       },
       "analysis": {
-        "status": "needs-fix",
+        "status": "ok",
         "dominantCause": "main-thread script/tokenization",
-        "issues": [
-          {
-            "severity": "high",
-            "type": "cpu",
-            "message": "mainThreadBusyRatio=0.9109",
-            "cause": "script/tokenization/model-edit dominated"
-          }
-        ],
+        "issues": [],
         "recommendation": [
           "Keep create-time language registration limited to the requested language unless languages are explicitly provided.",
           "Use registerMonacoThemes() before first render when an app intentionally wants to preload many languages.",
           "Compare the default-options and narrow-languages cold scenarios before changing hard budgets."
         ],
         "debug": {
-          "p95": 236.6,
-          "max": 236.6,
-          "wallMs": 328,
-          "busy": 0.9109,
-          "taskMs": 298.77,
-          "scriptMs": 186.88,
+          "p95": 224,
+          "max": 224,
+          "wallMs": 275,
+          "busy": 0.9087,
+          "taskMs": 249.88,
+          "scriptMs": 134.71,
           "layoutCount": 9,
           "recalcStyleCount": 9,
           "layoutPerOp": 9,
@@ -222,46 +228,51 @@
       "entry": "dist",
       "operations": 1,
       "samples": [
-        85.60000002384186
+        87.30000001192093
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 85.6,
-        "p50": 85.6,
-        "p75": 85.6,
-        "p95": 85.6,
-        "p99": 85.6,
-        "max": 85.6,
-        "avg": 85.6
+        "min": 87.3,
+        "p50": 87.3,
+        "p75": 87.3,
+        "p95": 87.3,
+        "p99": 87.3,
+        "max": 87.3,
+        "avg": 87.3
+      },
+      "phases": {
+        "createMs": 5.6,
+        "highlightAfterCreateMs": 81.7,
+        "totalMs": 87.3
       },
       "chars": 14994,
       "lines": 182,
       "longTasks": {
         "count": 3,
-        "maxMs": 70,
-        "totalMs": 188
+        "maxMs": 72,
+        "totalMs": 192
       },
       "cdp": {
-        "wallMs": 370,
-        "taskDurationMs": 334.42,
-        "scriptDurationMs": 219.62,
-        "layoutDurationMs": 27.92,
-        "recalcStyleDurationMs": 4.41,
-        "layoutCount": 15,
-        "recalcStyleCount": 15,
-        "jsHeapUsedDeltaMB": 5.1,
-        "mainThreadBusyRatio": 0.9038
+        "wallMs": 120,
+        "taskDurationMs": 99.3,
+        "scriptDurationMs": 87.25,
+        "layoutDurationMs": 0.92,
+        "recalcStyleDurationMs": 1.37,
+        "layoutCount": 7,
+        "recalcStyleCount": 7,
+        "jsHeapUsedDeltaMB": 3.1,
+        "mainThreadBusyRatio": 0.8275
       },
       "timeline": {
         "Layout": {
-          "count": 15,
-          "durationMs": 27.78,
-          "perOperation": 15
+          "count": 7,
+          "durationMs": 0.86,
+          "perOperation": 7
         },
         "UpdateLayoutTree": {
-          "count": 15,
-          "durationMs": 4.42,
-          "perOperation": 15
+          "count": 7,
+          "durationMs": 1.38,
+          "perOperation": 7
         },
         "RecalculateStyles": {
           "count": 0,
@@ -269,9 +280,9 @@
           "perOperation": 0
         },
         "Paint": {
-          "count": 28,
-          "durationMs": 0.48,
-          "perOperation": 28
+          "count": 14,
+          "durationMs": 0.17,
+          "perOperation": 14
         },
         "CompositeLayers": {
           "count": 0,
@@ -279,9 +290,223 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 57,
-          "durationMs": 183.46,
-          "perOperation": 57
+          "count": 36,
+          "durationMs": 87.64,
+          "perOperation": 36
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      },
+      "analysis": {
+        "status": "ok",
+        "dominantCause": "layout / height / scroll reveal",
+        "issues": [],
+        "recommendation": [
+          "No obvious single bottleneck; inspect trace and compare against baseline deltas."
+        ],
+        "debug": {
+          "p95": 87.3,
+          "max": 87.3,
+          "wallMs": 120,
+          "busy": 0.8275,
+          "taskMs": 99.3,
+          "scriptMs": 87.25,
+          "layoutCount": 7,
+          "recalcStyleCount": 7,
+          "layoutPerOp": 7,
+          "stylePerOp": 7,
+          "paintPerOp": 14,
+          "diffComputeP95": 0
+        }
+      }
+    },
+    {
+      "name": "editor-update-highlight",
+      "entry": "dist",
+      "operations": 80,
+      "samples": [
+        74.10000002384186,
+        41.30000001192093,
+        42.80000001192093,
+        41.59999996423721,
+        41.59999996423721,
+        41.90000003576279,
+        40.19999998807907,
+        48,
+        35.09999996423721,
+        41.10000002384186,
+        43.299999952316284,
+        41.5,
+        41.200000047683716,
+        42.09999996423721,
+        41.80000001192093,
+        41,
+        41.80000001192093,
+        42.5,
+        40.89999997615814,
+        41.69999998807907,
+        41,
+        42.80000001192093,
+        41.60000002384186,
+        40.09999996423721,
+        43.10000002384186,
+        40.19999998807907,
+        42.69999998807907,
+        41.10000002384186,
+        41.69999998807907,
+        42.30000001192093,
+        41.30000001192093,
+        42.19999998807907,
+        40.80000001192093,
+        42.5,
+        41.80000001192093,
+        41.69999998807907,
+        41.19999998807907,
+        42,
+        40.69999998807907,
+        42.80000001192093,
+        40.60000002384186,
+        42.90000003576279,
+        41,
+        41.89999997615814,
+        42.40000003576279,
+        41,
+        42,
+        40.59999996423721,
+        41.89999997615814,
+        40.10000002384186,
+        42.89999997615814,
+        41.90000003576279,
+        41.5,
+        41.89999997615814,
+        41.60000002384186,
+        40.60000002384186,
+        43.59999996423721,
+        41.40000003576279,
+        41.89999997615814,
+        41,
+        40.30000001192093,
+        42.799999952316284,
+        41.80000001192093,
+        42.10000002384186,
+        41.19999998807907,
+        42.30000001192093,
+        41.80000001192093,
+        40.89999997615814,
+        41.10000002384186,
+        40.799999952316284,
+        42.89999997615814,
+        41,
+        43,
+        41.5,
+        40.5,
+        42.10000002384186,
+        41.59999996423721,
+        41.5,
+        42.09999996423721,
+        41.5
+      ],
+      "sampleSummary": {
+        "count": 80,
+        "min": 35.1,
+        "p50": 41.6,
+        "p75": 42.1,
+        "p95": 43.1,
+        "p99": 74.1,
+        "max": 74.1,
+        "avg": 42.06
+      },
+      "phaseSummary": {
+        "updateCallMs": {
+          "count": 80,
+          "min": 0,
+          "p50": 0,
+          "p75": 0,
+          "p95": 0.1,
+          "p99": 0.5,
+          "max": 0.5,
+          "avg": 0.02
+        },
+        "modelReadyMs": {
+          "count": 80,
+          "min": 18.4,
+          "p50": 24.9,
+          "p75": 25.4,
+          "p95": 26.4,
+          "p99": 68.9,
+          "max": 68.9,
+          "avg": 25.41
+        },
+        "highlightReadyMs": {
+          "count": 80,
+          "min": 5.2,
+          "p50": 16.6,
+          "p75": 17.2,
+          "p95": 18.2,
+          "p99": 19.9,
+          "max": 19.9,
+          "avg": 16.62
+        },
+        "totalMs": {
+          "count": 80,
+          "min": 35.1,
+          "p50": 41.6,
+          "p75": 42.1,
+          "p95": 43.1,
+          "p99": 74.1,
+          "max": 74.1,
+          "avg": 42.06
+        }
+      },
+      "longTasks": {
+        "count": 3,
+        "maxMs": 81,
+        "totalMs": 200
+      },
+      "cdp": {
+        "wallMs": 3728,
+        "taskDurationMs": 3080.15,
+        "scriptDurationMs": 2779.61,
+        "layoutDurationMs": 44.76,
+        "recalcStyleDurationMs": 12.87,
+        "layoutCount": 89,
+        "recalcStyleCount": 89,
+        "jsHeapUsedDeltaMB": 8.56,
+        "mainThreadBusyRatio": 0.8262
+      },
+      "timeline": {
+        "Layout": {
+          "count": 89,
+          "durationMs": 43.67,
+          "perOperation": 1.1125
+        },
+        "UpdateLayoutTree": {
+          "count": 89,
+          "durationMs": 12.96,
+          "perOperation": 1.1125
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 176,
+          "durationMs": 5.54,
+          "perOperation": 2.2
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 1905,
+          "durationMs": 2776.92,
+          "perOperation": 23.8125
         },
         "EvaluateScript": {
           "count": 0,
@@ -297,191 +522,12 @@
           "No obvious single bottleneck; inspect trace and compare against baseline deltas."
         ],
         "debug": {
-          "p95": 85.6,
-          "max": 85.6,
-          "wallMs": 370,
-          "busy": 0.9038,
-          "taskMs": 334.42,
-          "scriptMs": 219.62,
-          "layoutCount": 15,
-          "recalcStyleCount": 15,
-          "layoutPerOp": 15,
-          "stylePerOp": 15,
-          "paintPerOp": 28,
-          "diffComputeP95": 0
-        }
-      }
-    },
-    {
-      "name": "editor-update-highlight",
-      "entry": "dist",
-      "operations": 80,
-      "samples": [
-        90.69999998807907,
-        43.19999998807907,
-        41.60000002384186,
-        41.89999997615814,
-        41.10000002384186,
-        42,
-        41.10000002384186,
-        41.89999997615814,
-        42,
-        40.89999997615814,
-        42.10000002384186,
-        42,
-        41.19999998807907,
-        41.89999997615814,
-        41.40000003576279,
-        41.5,
-        41,
-        42.799999952316284,
-        41.200000047683716,
-        43,
-        41.19999998807907,
-        40.69999998807907,
-        42,
-        40.69999998807907,
-        42.19999998807907,
-        42.200000047683716,
-        41.5,
-        41.5,
-        43.09999996423721,
-        40.80000001192093,
-        41.19999998807907,
-        41.90000003576279,
-        40.39999997615814,
-        43.69999998807907,
-        40.90000003576279,
-        42.09999996423721,
-        40.90000003576279,
-        42.299999952316284,
-        41.80000001192093,
-        41.40000003576279,
-        41.5,
-        41.89999997615814,
-        41.80000001192093,
-        41.19999998807907,
-        42.10000002384186,
-        42,
-        41.19999998807907,
-        40.60000002384186,
-        42.10000002384186,
-        41.69999998807907,
-        42.39999997615814,
-        40.60000002384186,
-        42.30000001192093,
-        42,
-        41.89999997615814,
-        40.80000001192093,
-        41.60000002384186,
-        41.5,
-        41.89999997615814,
-        42.200000047683716,
-        40.799999952316284,
-        41.80000001192093,
-        42.10000002384186,
-        41.30000001192093,
-        42.09999996423721,
-        41.69999998807907,
-        41.30000001192093,
-        41.69999998807907,
-        42,
-        41.799999952316284,
-        41.10000002384186,
-        41.80000001192093,
-        41.5,
-        42,
-        42,
-        41.89999997615814,
-        40.80000001192093,
-        41.59999996423721,
-        42.19999998807907,
-        40.89999997615814
-      ],
-      "sampleSummary": {
-        "count": 80,
-        "min": 40.4,
-        "p50": 41.8,
-        "p75": 42,
-        "p95": 43,
-        "p99": 90.7,
-        "max": 90.7,
-        "avg": 42.28
-      },
-      "longTasks": {
-        "count": 3,
-        "maxMs": 71,
-        "totalMs": 188
-      },
-      "cdp": {
-        "wallMs": 3731,
-        "taskDurationMs": 3123.65,
-        "scriptDurationMs": 2868.56,
-        "layoutDurationMs": 40.94,
-        "recalcStyleDurationMs": 12.14,
-        "layoutCount": 89,
-        "recalcStyleCount": 89,
-        "jsHeapUsedDeltaMB": 5.16,
-        "mainThreadBusyRatio": 0.8372
-      },
-      "timeline": {
-        "Layout": {
-          "count": 89,
-          "durationMs": 40.01,
-          "perOperation": 1.1125
-        },
-        "UpdateLayoutTree": {
-          "count": 89,
-          "durationMs": 12.22,
-          "perOperation": 1.1125
-        },
-        "RecalculateStyles": {
-          "count": 0,
-          "durationMs": 0,
-          "perOperation": 0
-        },
-        "Paint": {
-          "count": 176,
-          "durationMs": 5.25,
-          "perOperation": 2.2
-        },
-        "CompositeLayers": {
-          "count": 0,
-          "durationMs": 0,
-          "perOperation": 0
-        },
-        "FunctionCall": {
-          "count": 1971,
-          "durationMs": 2858.42,
-          "perOperation": 24.6375
-        },
-        "EvaluateScript": {
-          "count": 0,
-          "durationMs": 0,
-          "perOperation": 0
-        }
-      },
-      "analysis": {
-        "status": "needs-fix",
-        "dominantCause": "main-thread script/tokenization",
-        "issues": [
-          {
-            "severity": "high",
-            "type": "cpu",
-            "message": "mainThreadBusyRatio=0.8372",
-            "cause": "script/tokenization/model-edit dominated"
-          }
-        ],
-        "recommendation": [
-          "No obvious single bottleneck; inspect trace and compare against baseline deltas."
-        ],
-        "debug": {
-          "p95": 43,
-          "max": 90.7,
-          "wallMs": 3731,
-          "busy": 0.8372,
-          "taskMs": 3123.65,
-          "scriptMs": 2868.56,
+          "p95": 43.1,
+          "max": 74.1,
+          "wallMs": 3728,
+          "busy": 0.8262,
+          "taskMs": 3080.15,
+          "scriptMs": 2779.61,
           "layoutCount": 89,
           "recalcStyleCount": 89,
           "layoutPerOp": 1.1125,
@@ -496,74 +542,116 @@
       "entry": "dist",
       "operations": 30,
       "samples": [
-        97.10000002384186,
-        43.89999997615814,
+        106.89999997615814,
+        42.80000001192093,
+        40.80000001192093,
+        41.80000001192093,
+        42.39999997615814,
+        41.10000002384186,
+        41.69999998807907,
+        41.10000002384186,
         42.200000047683716,
+        40.90000003576279,
+        41.89999997615814,
         41,
-        41.09999996423721,
-        41.80000001192093,
-        42.10000002384186,
-        40.60000002384186,
-        42.10000002384186,
-        41.80000001192093,
-        41.09999996423721,
-        41.89999997615814,
-        42.5,
-        41.60000002384186,
-        42,
-        41.40000003576279,
-        40.299999952316284,
-        41.89999997615814,
-        42,
-        42.200000047683716,
-        40.799999952316284,
-        42.30000001192093,
-        40.69999998807907,
         42.59999996423721,
         41.30000001192093,
-        41.80000001192093,
+        41.90000003576279,
+        41.30000001192093,
+        41.59999996423721,
         41,
-        41.39999997615814,
-        42.19999998807907,
-        41
+        41.80000001192093,
+        42.10000002384186,
+        41.09999996423721,
+        42.5,
+        41.40000003576279,
+        41.09999996423721,
+        41.80000001192093,
+        41.80000001192093,
+        40.299999952316284,
+        41.5,
+        41.5,
+        43.09999996423721
       ],
       "sampleSummary": {
         "count": 30,
         "min": 40.3,
-        "p50": 41.8,
-        "p75": 42.2,
-        "p95": 43.9,
-        "p99": 97.1,
-        "max": 97.1,
-        "avg": 43.52
+        "p50": 41.6,
+        "p75": 42.1,
+        "p95": 43.1,
+        "p99": 106.9,
+        "max": 106.9,
+        "avg": 43.81
+      },
+      "phaseSummary": {
+        "updateCallMs": {
+          "count": 30,
+          "min": 0,
+          "p50": 0,
+          "p75": 0.1,
+          "p95": 0.1,
+          "p99": 0.1,
+          "max": 0.1,
+          "avg": 0.03
+        },
+        "modelReadyMs": {
+          "count": 30,
+          "min": 23.8,
+          "p50": 24.8,
+          "p75": 25.4,
+          "p95": 26.5,
+          "p99": 99.4,
+          "max": 99.4,
+          "avg": 27.37
+        },
+        "settleMs": {
+          "count": 30,
+          "min": 7.4,
+          "p50": 16.8,
+          "p75": 17.1,
+          "p95": 17.7,
+          "p99": 17.9,
+          "max": 17.9,
+          "avg": 16.41
+        },
+        "totalMs": {
+          "count": 30,
+          "min": 40.3,
+          "p50": 41.6,
+          "p75": 42.1,
+          "p95": 43.1,
+          "p99": 106.9,
+          "max": 106.9,
+          "avg": 43.81
+        }
       },
       "chars": 118269,
       "lines": 1402,
       "longTasks": {
         "count": 3,
-        "maxMs": 73,
-        "totalMs": 191
+        "maxMs": 80,
+        "totalMs": 201
       },
       "cdp": {
-        "wallMs": 1634,
-        "taskDurationMs": 1366.01,
-        "scriptDurationMs": 1174.26,
-        "layoutDurationMs": 39.34,
-        "recalcStyleDurationMs": 10.48,
+        "wallMs": 1635,
+        "taskDurationMs": 1357.51,
+        "scriptDurationMs": 1156.47,
+        "layoutDurationMs": 41.4,
+        "recalcStyleDurationMs": 11.45,
         "layoutCount": 100,
         "recalcStyleCount": 99,
-        "jsHeapUsedDeltaMB": 8.47,
-        "mainThreadBusyRatio": 0.836
+        "jsHeapUsedDeltaMB": 9.62,
+        "mainThreadBusyRatio": 0.8303
       },
       "timeline": {
         "Layout": {
           "count": 100,
-          "durationMs": 38.37,
+          "durationMs": 40.42,
           "perOperation": 3.3333
         },
         "UpdateLayoutTree": {
           "count": 99,
-          "durationMs": 10.52,
+          "durationMs": 11.46,
           "perOperation": 3.3
         },
         "RecalculateStyles": {
@@ -573,7 +661,7 @@
         },
         "Paint": {
           "count": 167,
-          "durationMs": 4.04,
+          "durationMs": 4,
           "perOperation": 5.5667
         },
         "CompositeLayers": {
@@ -582,9 +670,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 857,
-          "durationMs": 1149.2,
-          "perOperation": 28.5667
+          "count": 841,
+          "durationMs": 1133.35,
+          "perOperation": 28.0333
         },
         "EvaluateScript": {
           "count": 0,
@@ -601,12 +689,12 @@
           "Keep minimalEditMaxChars and minimalEditMaxChangeRatio guards aligned with large-document replacement results."
         ],
         "debug": {
-          "p95": 43.9,
-          "max": 97.1,
-          "wallMs": 1634,
-          "busy": 0.836,
-          "taskMs": 1366.01,
-          "scriptMs": 1174.26,
+          "p95": 43.1,
+          "max": 106.9,
+          "wallMs": 1635,
+          "busy": 0.8303,
+          "taskMs": 1357.51,
+          "scriptMs": 1156.47,
           "layoutCount": 100,
           "recalcStyleCount": 99,
           "layoutPerOp": 3.3333,
@@ -617,50 +705,62 @@
       }
     },
     {
-      "name": "editor-stream-burst",
+      "name": "editor-stream-full-update-burst",
       "entry": "dist",
+      "mode": "full-update",
       "operations": 500,
-      "wallMs": 3606,
+      "wallMs": 3545.5,
+      "intentionalSleepMs": 2750,
+      "phases": {
+        "emitLoopMs": 3188,
+        "finalModelWaitMs": 88.2,
+        "highlightWaitMs": 16.1,
+        "settleMs": 253.2,
+        "totalMs": 3545.5
+      },
       "samples": [
-        3606
+        3545.5
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 3606,
-        "p50": 3606,
-        "p75": 3606,
-        "p95": 3606,
-        "p99": 3606,
-        "max": 3606,
-        "avg": 3606
+        "min": 3545.5,
+        "p50": 3545.5,
+        "p75": 3545.5,
+        "p95": 3545.5,
+        "p99": 3545.5,
+        "max": 3545.5,
+        "avg": 3545.5
       },
       "finalChars": 16314,
       "longTasks": {
         "count": 2,
-        "maxMs": 69,
-        "totalMs": 128
+        "maxMs": 76,
+        "totalMs": 138
       },
       "cdp": {
-        "wallMs": 3976,
-        "taskDurationMs": 924.22,
-        "scriptDurationMs": 473.47,
-        "layoutDurationMs": 87.93,
-        "recalcStyleDurationMs": 79.97,
-        "layoutCount": 110,
-        "recalcStyleCount": 121,
-        "jsHeapUsedDeltaMB": 5.12,
-        "mainThreadBusyRatio": 0.2325
+        "wallMs": 3908,
+        "taskDurationMs": 767.68,
+        "scriptDurationMs": 384.06,
+        "layoutDurationMs": 72.08,
+        "recalcStyleDurationMs": 55.08,
+        "layoutCount": 82,
+        "recalcStyleCount": 93,
+        "jsHeapUsedDeltaMB": 7.17,
+        "mainThreadBusyRatio": 0.1964,
+        "intentionalSleepMs": 2750,
+        "activeWallMs": 1158,
+        "activeBusyRatio": 0.6629
       },
       "timeline": {
         "Layout": {
-          "count": 110,
-          "durationMs": 86.33,
-          "perOperation": 0.22
+          "count": 82,
+          "durationMs": 70.99,
+          "perOperation": 0.164
         },
         "UpdateLayoutTree": {
-          "count": 121,
-          "durationMs": 79.75,
-          "perOperation": 0.242
+          "count": 93,
+          "durationMs": 54.92,
+          "perOperation": 0.186
         },
         "RecalculateStyles": {
           "count": 0,
@@ -668,9 +768,9 @@
           "perOperation": 0
         },
         "Paint": {
-          "count": 284,
-          "durationMs": 22.67,
-          "perOperation": 0.568
+          "count": 215,
+          "durationMs": 17.63,
+          "perOperation": 0.43
         },
         "CompositeLayers": {
           "count": 0,
@@ -678,9 +778,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 1471,
-          "durationMs": 453.84,
-          "perOperation": 2.942
+          "count": 1443,
+          "durationMs": 363.82,
+          "perOperation": 2.886
         },
         "EvaluateScript": {
           "count": 0,
@@ -696,17 +796,124 @@
           "No obvious single bottleneck; inspect trace and compare against baseline deltas."
         ],
         "debug": {
-          "p95": 3606,
-          "max": 3606,
-          "wallMs": 3606,
-          "busy": 0.2325,
-          "taskMs": 924.22,
-          "scriptMs": 473.47,
-          "layoutCount": 110,
-          "recalcStyleCount": 121,
-          "layoutPerOp": 0.22,
-          "stylePerOp": 0.242,
-          "paintPerOp": 0.568,
+          "p95": 3545.5,
+          "max": 3545.5,
+          "wallMs": 3545.5,
+          "busy": 0.6629,
+          "taskMs": 767.68,
+          "scriptMs": 384.06,
+          "layoutCount": 82,
+          "recalcStyleCount": 93,
+          "layoutPerOp": 0.164,
+          "stylePerOp": 0.186,
+          "paintPerOp": 0.43,
+          "diffComputeP95": 0
+        }
+      }
+    },
+    {
+      "name": "editor-stream-append-burst",
+      "entry": "dist",
+      "mode": "append",
+      "operations": 500,
+      "wallMs": 3489.199999988079,
+      "intentionalSleepMs": 2750,
+      "phases": {
+        "emitLoopMs": 3169.9,
+        "finalModelWaitMs": 47.3,
+        "highlightWaitMs": 16,
+        "settleMs": 256,
+        "totalMs": 3489.2
+      },
+      "samples": [
+        3489.199999988079
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 3489.2,
+        "p50": 3489.2,
+        "p75": 3489.2,
+        "p95": 3489.2,
+        "p99": 3489.2,
+        "max": 3489.2,
+        "avg": 3489.2
+      },
+      "finalChars": 16314,
+      "longTasks": {
+        "count": 2,
+        "maxMs": 76,
+        "totalMs": 138
+      },
+      "cdp": {
+        "wallMs": 3808,
+        "taskDurationMs": 703.69,
+        "scriptDurationMs": 358.3,
+        "layoutDurationMs": 72.25,
+        "recalcStyleDurationMs": 54.92,
+        "layoutCount": 99,
+        "recalcStyleCount": 107,
+        "jsHeapUsedDeltaMB": 7.61,
+        "mainThreadBusyRatio": 0.1848,
+        "intentionalSleepMs": 2750,
+        "activeWallMs": 1058,
+        "activeBusyRatio": 0.6651
+      },
+      "timeline": {
+        "Layout": {
+          "count": 99,
+          "durationMs": 71,
+          "perOperation": 0.198
+        },
+        "UpdateLayoutTree": {
+          "count": 107,
+          "durationMs": 54.83,
+          "perOperation": 0.214
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 253,
+          "durationMs": 16.75,
+          "perOperation": 0.506
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 1011,
+          "durationMs": 337.49,
+          "perOperation": 2.022
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      },
+      "analysis": {
+        "status": "ok",
+        "dominantCause": "main-thread script/tokenization",
+        "issues": [],
+        "recommendation": [
+          "No obvious single bottleneck; inspect trace and compare against baseline deltas."
+        ],
+        "debug": {
+          "p95": 3489.2,
+          "max": 3489.2,
+          "wallMs": 3489.199999988079,
+          "busy": 0.6651,
+          "taskMs": 703.69,
+          "scriptMs": 358.3,
+          "layoutCount": 99,
+          "recalcStyleCount": 107,
+          "layoutPerOp": 0.198,
+          "stylePerOp": 0.214,
+          "paintPerOp": 0.506,
           "diffComputeP95": 0
         }
       }
@@ -716,44 +923,50 @@
       "entry": "dist",
       "operations": 1,
       "samples": [
-        397.7000000476837
+        413.89999997615814
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 397.7,
-        "p50": 397.7,
-        "p75": 397.7,
-        "p95": 397.7,
-        "p99": 397.7,
-        "max": 397.7,
-        "avg": 397.7
+        "min": 413.9,
+        "p50": 413.9,
+        "p75": 413.9,
+        "p95": 413.9,
+        "p99": 413.9,
+        "max": 413.9,
+        "avg": 413.9
       },
+      "phases": {
+        "createMs": 143.4,
+        "highlightAfterCreateMs": 270.5,
+        "totalMs": 413.9
+      },
+      "options": "default",
       "chars": 37064,
       "longTasks": {
         "count": 3,
-        "maxMs": 99,
-        "totalMs": 234
+        "maxMs": 104,
+        "totalMs": 256
       },
       "cdp": {
-        "wallMs": 457,
-        "taskDurationMs": 416.16,
-        "scriptDurationMs": 254.04,
-        "layoutDurationMs": 35.48,
-        "recalcStyleDurationMs": 19.44,
+        "wallMs": 468,
+        "taskDurationMs": 424.06,
+        "scriptDurationMs": 264.82,
+        "layoutDurationMs": 36.08,
+        "recalcStyleDurationMs": 20.05,
         "layoutCount": 19,
         "recalcStyleCount": 30,
-        "jsHeapUsedDeltaMB": 3.94,
-        "mainThreadBusyRatio": 0.9106
+        "jsHeapUsedDeltaMB": 4.01,
+        "mainThreadBusyRatio": 0.9061
       },
       "timeline": {
         "Layout": {
           "count": 19,
-          "durationMs": 35.28,
+          "durationMs": 35.87,
           "perOperation": 19
         },
         "UpdateLayoutTree": {
           "count": 30,
-          "durationMs": 19.45,
+          "durationMs": 20.05,
           "perOperation": 30
         },
         "RecalculateStyles": {
@@ -763,7 +976,7 @@
         },
         "Paint": {
           "count": 45,
-          "durationMs": 3.85,
+          "durationMs": 3.7,
           "perOperation": 45
         },
         "CompositeLayers": {
@@ -772,9 +985,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 85,
-          "durationMs": 224.94,
-          "perOperation": 85
+          "count": 83,
+          "durationMs": 239.09,
+          "perOperation": 83
         },
         "EvaluateScript": {
           "count": 0,
@@ -792,12 +1005,12 @@
           "Compare the default-options and narrow-languages cold scenarios before changing hard budgets."
         ],
         "debug": {
-          "p95": 397.7,
-          "max": 397.7,
-          "wallMs": 457,
-          "busy": 0.9106,
-          "taskMs": 416.16,
-          "scriptMs": 254.04,
+          "p95": 413.9,
+          "max": 413.9,
+          "wallMs": 468,
+          "busy": 0.9061,
+          "taskMs": 424.06,
+          "scriptMs": 264.82,
           "layoutCount": 19,
           "recalcStyleCount": 30,
           "layoutPerOp": 19,
@@ -812,45 +1025,51 @@
       "entry": "dist",
       "operations": 1,
       "samples": [
-        367.5
+        378.60000002384186
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 367.5,
-        "p50": 367.5,
-        "p75": 367.5,
-        "p95": 367.5,
-        "p99": 367.5,
-        "max": 367.5,
-        "avg": 367.5
+        "min": 378.6,
+        "p50": 378.6,
+        "p75": 378.6,
+        "p95": 378.6,
+        "p99": 378.6,
+        "max": 378.6,
+        "avg": 378.6
       },
+      "phases": {
+        "createMs": 148.3,
+        "highlightAfterCreateMs": 230.3,
+        "totalMs": 378.6
+      },
+      "options": {},
       "chars": 36740,
       "longTasks": {
         "count": 3,
-        "maxMs": 99,
-        "totalMs": 216
+        "maxMs": 103,
+        "totalMs": 230
       },
       "cdp": {
-        "wallMs": 428,
-        "taskDurationMs": 385.35,
-        "scriptDurationMs": 222.56,
-        "layoutDurationMs": 33.13,
-        "recalcStyleDurationMs": 15.44,
-        "layoutCount": 21,
-        "recalcStyleCount": 33,
-        "jsHeapUsedDeltaMB": 3.76,
-        "mainThreadBusyRatio": 0.9003
+        "wallMs": 431,
+        "taskDurationMs": 386.74,
+        "scriptDurationMs": 229.48,
+        "layoutDurationMs": 33.88,
+        "recalcStyleDurationMs": 15.32,
+        "layoutCount": 22,
+        "recalcStyleCount": 35,
+        "jsHeapUsedDeltaMB": 4.06,
+        "mainThreadBusyRatio": 0.8973
       },
       "timeline": {
         "Layout": {
-          "count": 21,
-          "durationMs": 32.91,
-          "perOperation": 21
+          "count": 22,
+          "durationMs": 33.65,
+          "perOperation": 22
         },
         "UpdateLayoutTree": {
-          "count": 33,
-          "durationMs": 15.45,
-          "perOperation": 33
+          "count": 35,
+          "durationMs": 15.32,
+          "perOperation": 35
         },
         "RecalculateStyles": {
           "count": 0,
@@ -858,9 +1077,9 @@
           "perOperation": 0
         },
         "Paint": {
-          "count": 54,
-          "durationMs": 2.61,
-          "perOperation": 54
+          "count": 58,
+          "durationMs": 2.32,
+          "perOperation": 58
         },
         "CompositeLayers": {
           "count": 0,
@@ -868,9 +1087,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 90,
-          "durationMs": 195.47,
-          "perOperation": 90
+          "count": 100,
+          "durationMs": 205.78,
+          "perOperation": 100
         },
         "EvaluateScript": {
           "count": 0,
@@ -879,33 +1098,130 @@
         }
       },
       "analysis": {
-        "status": "needs-fix",
+        "status": "ok",
         "dominantCause": "main-thread script/tokenization",
-        "issues": [
-          {
-            "severity": "high",
-            "type": "cpu",
-            "message": "mainThreadBusyRatio=0.9003",
-            "cause": "browser rendering/layout dominated"
-          }
-        ],
+        "issues": [],
         "recommendation": [
           "Keep create-time language registration limited to the requested language unless languages are explicitly provided.",
           "Use registerMonacoThemes() before first render when an app intentionally wants to preload many languages.",
           "Compare the default-options and narrow-languages cold scenarios before changing hard budgets."
         ],
         "debug": {
-          "p95": 367.5,
-          "max": 367.5,
-          "wallMs": 428,
-          "busy": 0.9003,
-          "taskMs": 385.35,
-          "scriptMs": 222.56,
+          "p95": 378.6,
+          "max": 378.6,
+          "wallMs": 431,
+          "busy": 0.8973,
+          "taskMs": 386.74,
+          "scriptMs": 229.48,
+          "layoutCount": 22,
+          "recalcStyleCount": 35,
+          "layoutPerOp": 22,
+          "stylePerOp": 35,
+          "paintPerOp": 58,
+          "diffComputeP95": 0
+        }
+      }
+    },
+    {
+      "name": "diff-cold-first-highlight-no-unchanged-regions",
+      "entry": "dist",
+      "operations": 1,
+      "samples": [
+        376.7000000476837
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 376.7,
+        "p50": 376.7,
+        "p75": 376.7,
+        "p95": 376.7,
+        "p99": 376.7,
+        "max": 376.7,
+        "avg": 376.7
+      },
+      "phases": {
+        "createMs": 151.8,
+        "highlightAfterCreateMs": 224.9,
+        "totalMs": 376.7
+      },
+      "options": {
+        "diffHideUnchangedRegions": false
+      },
+      "chars": 36740,
+      "longTasks": {
+        "count": 3,
+        "maxMs": 107,
+        "totalMs": 228
+      },
+      "cdp": {
+        "wallMs": 434,
+        "taskDurationMs": 383.3,
+        "scriptDurationMs": 228.78,
+        "layoutDurationMs": 34.95,
+        "recalcStyleDurationMs": 14.65,
+        "layoutCount": 21,
+        "recalcStyleCount": 35,
+        "jsHeapUsedDeltaMB": 3.83,
+        "mainThreadBusyRatio": 0.8832
+      },
+      "timeline": {
+        "Layout": {
+          "count": 21,
+          "durationMs": 34.72,
+          "perOperation": 21
+        },
+        "UpdateLayoutTree": {
+          "count": 35,
+          "durationMs": 14.72,
+          "perOperation": 35
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 57,
+          "durationMs": 2.21,
+          "perOperation": 57
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 96,
+          "durationMs": 204.91,
+          "perOperation": 96
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      },
+      "analysis": {
+        "status": "ok",
+        "dominantCause": "main-thread script/tokenization",
+        "issues": [],
+        "recommendation": [
+          "Keep create-time language registration limited to the requested language unless languages are explicitly provided.",
+          "Use registerMonacoThemes() before first render when an app intentionally wants to preload many languages.",
+          "Compare the default-options and narrow-languages cold scenarios before changing hard budgets."
+        ],
+        "debug": {
+          "p95": 376.7,
+          "max": 376.7,
+          "wallMs": 434,
+          "busy": 0.8832,
+          "taskMs": 383.3,
+          "scriptMs": 228.78,
           "layoutCount": 21,
-          "recalcStyleCount": 33,
+          "recalcStyleCount": 35,
           "layoutPerOp": 21,
-          "stylePerOp": 33,
-          "paintPerOp": 54,
+          "stylePerOp": 35,
+          "paintPerOp": 57,
           "diffComputeP95": 0
         }
       }
@@ -915,76 +1231,128 @@
       "entry": "dist",
       "operations": 60,
       "samples": [
-        37.69999998807907,
-        39.10000002384186,
-        40.89999997615814,
-        42.299999952316284,
-        42,
-        41.90000003576279,
-        40.700000047683716,
-        41.89999997615814,
-        42.30000001192093,
-        40.90000003576279,
-        41.69999998807907,
-        41.89999997615814,
-        42.200000047683716,
-        41.19999998807907,
-        41.80000001192093,
-        41.5,
-        41.90000003576279,
-        41.299999952316284,
-        41.5,
-        42,
-        41.80000001192093,
-        40.19999998807907,
-        42.80000001192093,
-        41.90000003576279,
-        41.09999996423721,
-        41.19999998807907,
-        41.69999998807907,
-        42,
-        41.90000003576279,
-        42.19999998807907,
-        41.09999996423721,
-        42.10000002384186,
-        41.89999997615814,
-        40.80000001192093,
+        39.799999952316284,
+        41.30000001192093,
         42.69999998807907,
-        41.700000047683716,
-        41.299999952316284,
+        40.19999998807907,
         41.40000003576279,
+        42.799999952316284,
+        40.700000047683716,
+        41.59999996423721,
         42,
+        42,
+        41.60000002384186,
+        41.30000001192093,
+        42.89999997615814,
+        41,
+        40,
+        42.5,
+        42,
+        41.89999997615814,
+        42,
+        41.200000047683716,
+        40.80000001192093,
+        42,
+        41.80000001192093,
+        42.10000002384186,
+        41.60000002384186,
+        40.89999997615814,
+        42.5,
+        41.39999997615814,
+        41.30000001192093,
+        41.69999998807907,
+        42.60000002384186,
+        40.39999997615814,
+        42.200000047683716,
+        42.5,
+        40.5,
+        41.39999997615814,
         41.10000002384186,
+        43.39999997615814,
+        41.40000003576279,
+        39.89999997615814,
+        43.10000002384186,
+        41.5,
+        41.299999952316284,
+        42.40000003576279,
+        41,
+        42,
+        41.09999996423721,
+        42.40000003576279,
+        42.19999998807907,
+        40.60000002384186,
+        42.09999996423721,
+        41.40000003576279,
+        41.39999997615814,
+        42.09999996423721,
+        41.40000003576279,
+        42.10000002384186,
+        41.19999998807907,
         42.39999997615814,
         40.60000002384186,
-        41.89999997615814,
-        42.60000002384186,
-        41,
-        41.69999998807907,
-        42.19999998807907,
-        41.5,
-        41.700000047683716,
-        41.299999952316284,
-        40.700000047683716,
-        42.19999998807907,
-        42.89999997615814,
-        41.19999998807907,
-        40.700000047683716,
-        43.09999996423721,
-        41,
-        41.10000002384186,
-        41.89999997615814,
-        40.90000003576279
+        40.89999997615814
       ],
       "sampleSummary": {
         "count": 60,
-        "min": 37.7,
-        "p50": 41.7,
-        "p75": 42,
-        "p95": 42.7,
-        "p99": 43.1,
-        "max": 43.1,
-        "avg": 41.54
+        "min": 39.8,
+        "p50": 41.5,
+        "p75": 42.1,
+        "p95": 42.8,
+        "p99": 43.4,
+        "max": 43.4,
+        "avg": 41.59
+      },
+      "phaseSummary": {
+        "updateCallMs": {
+          "count": 60,
+          "min": 0,
+          "p50": 0.1,
+          "p75": 0.2,
+          "p95": 0.3,
+          "p99": 1.9,
+          "max": 1.9,
+          "avg": 0.17
+        },
+        "modelReadyMs": {
+          "count": 60,
+          "min": 23.8,
+          "p50": 25.6,
+          "p75": 26,
+          "p95": 26.7,
+          "p99": 27.8,
+          "max": 27.8,
+          "avg": 25.55
+        },
+        "highlightReadyMs": {
+          "count": 60,
+          "min": 12.1,
+          "p50": 15.8,
+          "p75": 16.5,
+          "p95": 17.2,
+          "p99": 17.9,
+          "max": 17.9,
+          "avg": 15.87
+        },
+        "diffSettledMs": {
+          "count": 60,
+          "min": 0,
+          "p50": 0,
+          "p75": 0,
+          "p95": 0,
+          "p99": 85.4,
+          "max": 85.4,
+          "avg": 1.42
+        },
+        "totalMs": {
+          "count": 60,
+          "min": 39.8,
+          "p50": 41.5,
+          "p75": 42.1,
+          "p95": 42.8,
+          "p99": 43.4,
+          "max": 43.4,
+          "avg": 41.59
+        }
       },
       "diffComputeSummary": {
         "count": 0,
@@ -999,30 +1367,30 @@
       "diffSettleUnavailable": true,
       "longTasks": {
         "count": 3,
-        "maxMs": 100,
-        "totalMs": 217
+        "maxMs": 102,
+        "totalMs": 224
       },
       "cdp": {
-        "wallMs": 4004,
-        "taskDurationMs": 2721.75,
-        "scriptDurationMs": 2277.03,
-        "layoutDurationMs": 52.75,
-        "recalcStyleDurationMs": 77.28,
-        "layoutCount": 86,
-        "recalcStyleCount": 261,
-        "jsHeapUsedDeltaMB": 9.09,
-        "mainThreadBusyRatio": 0.6798
+        "wallMs": 3100,
+        "taskDurationMs": 2586.45,
+        "scriptDurationMs": 2197.21,
+        "layoutDurationMs": 53.8,
+        "recalcStyleDurationMs": 59.98,
+        "layoutCount": 89,
+        "recalcStyleCount": 248,
+        "jsHeapUsedDeltaMB": 11.87,
+        "mainThreadBusyRatio": 0.8343
       },
       "timeline": {
         "Layout": {
-          "count": 86,
-          "durationMs": 51.84,
-          "perOperation": 1.4333
+          "count": 89,
+          "durationMs": 52.77,
+          "perOperation": 1.4833
         },
         "UpdateLayoutTree": {
-          "count": 261,
-          "durationMs": 77.33,
-          "perOperation": 4.35
+          "count": 248,
+          "durationMs": 59.99,
+          "perOperation": 4.1333
         },
         "RecalculateStyles": {
           "count": 0,
@@ -1030,9 +1398,9 @@
           "perOperation": 0
         },
         "Paint": {
-          "count": 196,
-          "durationMs": 14.4,
-          "perOperation": 3.2667
+          "count": 200,
+          "durationMs": 14.89,
+          "perOperation": 3.3333
         },
         "CompositeLayers": {
           "count": 0,
@@ -1040,9 +1408,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 1965,
-          "durationMs": 2296.04,
-          "perOperation": 32.75
+          "count": 1816,
+          "durationMs": 2222.09,
+          "perOperation": 30.2667
         },
         "EvaluateScript": {
           "count": 0,
@@ -1058,17 +1426,17 @@
           "No obvious single bottleneck; inspect trace and compare against baseline deltas."
         ],
         "debug": {
-          "p95": 42.7,
-          "max": 43.1,
-          "wallMs": 4004,
-          "busy": 0.6798,
-          "taskMs": 2721.75,
-          "scriptMs": 2277.03,
-          "layoutCount": 86,
-          "recalcStyleCount": 261,
-          "layoutPerOp": 1.4333,
-          "stylePerOp": 4.35,
-          "paintPerOp": 3.2667,
+          "p95": 42.8,
+          "max": 43.4,
+          "wallMs": 3100,
+          "busy": 0.8343,
+          "taskMs": 2586.45,
+          "scriptMs": 2197.21,
+          "layoutCount": 89,
+          "recalcStyleCount": 248,
+          "layoutPerOp": 1.4833,
+          "stylePerOp": 4.1333,
+          "paintPerOp": 3.3333,
           "diffComputeP95": 0
         }
       }
@@ -1078,40 +1446,92 @@
       "entry": "dist",
       "operations": 24,
       "samples": [
-        92.59999996423721,
-        73.69999998807907,
-        66.60000002384186,
-        74.70000004768372,
-        75.09999996423721,
-        66.89999997615814,
-        67.10000002384186,
-        66.09999996423721,
-        67.60000002384186,
-        66.19999998807907,
-        66,
-        66.80000001192093,
+        92.40000003576279,
+        68.30000001192093,
+        65.19999998807907,
+        67,
+        74.80000001192093,
+        74.80000001192093,
+        76.10000002384186,
         74.19999998807907,
-        68.10000002384186,
-        65.29999995231628,
-        67.5,
-        67.10000002384186,
-        65.60000002384186,
+        75.29999995231628,
+        73.89999997615814,
+        67.80000001192093,
+        66.69999998807907,
+        74.10000002384186,
+        67.39999997615814,
+        73.30000001192093,
         65.90000003576279,
-        67.79999995231628,
-        66.30000001192093,
-        66.5,
-        66.40000003576279,
-        67.29999995231628
+        69.19999998807907,
+        64.5,
+        68.19999998807907,
+        74.69999998807907,
+        67.60000002384186,
+        74.39999997615814,
+        74.69999998807907,
+        67.19999998807907
       ],
       "sampleSummary": {
         "count": 24,
-        "min": 65.3,
-        "p50": 66.9,
-        "p75": 67.8,
-        "p95": 75.1,
-        "p99": 92.6,
-        "max": 92.6,
-        "avg": 69.06
+        "min": 64.5,
+        "p50": 69.2,
+        "p75": 74.7,
+        "p95": 76.1,
+        "p99": 92.4,
+        "max": 92.4,
+        "avg": 71.57
+      },
+      "phaseSummary": {
+        "updateCallMs": {
+          "count": 24,
+          "min": 0.1,
+          "p50": 0.2,
+          "p75": 0.2,
+          "p95": 0.3,
+          "p99": 1.9,
+          "max": 1.9,
+          "avg": 0.26
+        },
+        "modelReadyMs": {
+          "count": 24,
+          "min": 54.5,
+          "p50": 56.2,
+          "p75": 57.3,
+          "p95": 61.3,
+          "p99": 62.6,
+          "max": 62.6,
+          "avg": 56.8
+        },
+        "frameSettleMs": {
+          "count": 24,
+          "min": 8.4,
+          "p50": 12,
+          "p75": 17.4,
+          "p95": 19.6,
+          "p99": 29.2,
+          "max": 29.2,
+          "avg": 14.51
+        },
+        "diffSettledMs": {
+          "count": 24,
+          "min": 0,
+          "p50": 0,
+          "p75": 0,
+          "p95": 0,
+          "p99": 77.1,
+          "max": 77.1,
+          "avg": 3.21
+        },
+        "totalMs": {
+          "count": 24,
+          "min": 64.5,
+          "p50": 69.2,
+          "p75": 74.7,
+          "p95": 76.1,
+          "p99": 92.4,
+          "max": 92.4,
+          "avg": 71.57
+        }
       },
       "diffComputeSummary": {
         "count": 0,
@@ -1128,30 +1548,30 @@
       "lines": 1102,
       "longTasks": {
         "count": 4,
-        "maxMs": 104,
-        "totalMs": 282
+        "maxMs": 118,
+        "totalMs": 306
       },
       "cdp": {
-        "wallMs": 3189,
-        "taskDurationMs": 2644.98,
-        "scriptDurationMs": 2353.7,
-        "layoutDurationMs": 37.92,
-        "recalcStyleDurationMs": 32.91,
+        "wallMs": 2331,
+        "taskDurationMs": 2133.72,
+        "scriptDurationMs": 1883.58,
+        "layoutDurationMs": 38.65,
+        "recalcStyleDurationMs": 30.76,
         "layoutCount": 25,
-        "recalcStyleCount": 139,
-        "jsHeapUsedDeltaMB": 5.65,
-        "mainThreadBusyRatio": 0.8294
+        "recalcStyleCount": 101,
+        "jsHeapUsedDeltaMB": 10.8,
+        "mainThreadBusyRatio": 0.9154
       },
       "timeline": {
         "Layout": {
           "count": 25,
-          "durationMs": 37.62,
+          "durationMs": 38.38,
           "perOperation": 1.0417
         },
         "UpdateLayoutTree": {
-          "count": 139,
-          "durationMs": 32.83,
-          "perOperation": 5.7917
+          "count": 101,
+          "durationMs": 30.8,
+          "perOperation": 4.2083
         },
         "RecalculateStyles": {
           "count": 0,
@@ -1160,7 +1580,7 @@
         },
         "Paint": {
           "count": 72,
-          "durationMs": 5.66,
+          "durationMs": 5.83,
           "perOperation": 3
         },
         "CompositeLayers": {
@@ -1169,9 +1589,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 1120,
-          "durationMs": 2329.76,
-          "perOperation": 46.6667
+          "count": 700,
+          "durationMs": 1863.11,
+          "perOperation": 29.1667
         },
         "EvaluateScript": {
           "count": 0,
@@ -1188,38 +1608,48 @@
           "Keep minimalEditMaxChars and minimalEditMaxChangeRatio guards aligned with large-document replacement results."
         ],
         "debug": {
-          "p95": 75.1,
-          "max": 92.6,
-          "wallMs": 3189,
-          "busy": 0.8294,
-          "taskMs": 2644.98,
-          "scriptMs": 2353.7,
+          "p95": 76.1,
+          "max": 92.4,
+          "wallMs": 2331,
+          "busy": 0.9154,
+          "taskMs": 2133.72,
+          "scriptMs": 1883.58,
           "layoutCount": 25,
-          "recalcStyleCount": 139,
+          "recalcStyleCount": 101,
           "layoutPerOp": 1.0417,
-          "stylePerOp": 5.7917,
+          "stylePerOp": 4.2083,
           "paintPerOp": 3,
           "diffComputeP95": 0
         }
       }
     },
     {
-      "name": "diff-stream-burst",
+      "name": "diff-stream-full-update-burst",
       "entry": "dist",
+      "mode": "full-update",
       "operations": 500,
-      "wallMs": 3557.800000011921,
+      "wallMs": 3702.900000035763,
+      "intentionalSleepMs": 2800,
+      "phases": {
+        "emitLoopMs": 3269.3,
+        "finalModelWaitMs": 29.4,
+        "highlightWaitMs": 26.6,
+        "diffSettledMs": 73.1,
+        "settleMs": 304.5,
+        "totalMs": 3702.9
+      },
       "samples": [
-        3557.800000011921
+        3702.900000035763
       ],
       "sampleSummary": {
         "count": 1,
-        "min": 3557.8,
-        "p50": 3557.8,
-        "p75": 3557.8,
-        "p95": 3557.8,
-        "p99": 3557.8,
-        "max": 3557.8,
-        "avg": 3557.8
+        "min": 3702.9,
+        "p50": 3702.9,
+        "p75": 3702.9,
+        "p95": 3702.9,
+        "p99": 3702.9,
+        "max": 3702.9,
+        "avg": 3702.9
       },
       "diffComputeSummary": {
         "count": 0,
@@ -1234,31 +1664,34 @@
       "diffSettleUnavailable": true,
       "finalChars": 25447,
       "longTasks": {
-        "count": 3,
-        "maxMs": 97,
-        "totalMs": 228
+        "count": 2,
+        "maxMs": 139,
+        "totalMs": 257
       },
       "cdp": {
-        "wallMs": 4923,
-        "taskDurationMs": 1596.92,
-        "scriptDurationMs": 707.12,
-        "layoutDurationMs": 120.42,
-        "recalcStyleDurationMs": 164.75,
-        "layoutCount": 309,
-        "recalcStyleCount": 499,
-        "jsHeapUsedDeltaMB": 10.85,
-        "mainThreadBusyRatio": 0.3244
+        "wallMs": 4481,
+        "taskDurationMs": 1687.87,
+        "scriptDurationMs": 778.48,
+        "layoutDurationMs": 135.14,
+        "recalcStyleDurationMs": 157.98,
+        "layoutCount": 314,
+        "recalcStyleCount": 446,
+        "jsHeapUsedDeltaMB": 12.67,
+        "mainThreadBusyRatio": 0.3767,
+        "intentionalSleepMs": 2800,
+        "activeWallMs": 1681,
+        "activeBusyRatio": 1.0041
       },
       "timeline": {
         "Layout": {
-          "count": 309,
-          "durationMs": 117.56,
-          "perOperation": 0.618
+          "count": 314,
+          "durationMs": 131.87,
+          "perOperation": 0.628
         },
         "UpdateLayoutTree": {
-          "count": 499,
-          "durationMs": 164.27,
-          "perOperation": 0.998
+          "count": 446,
+          "durationMs": 157.45,
+          "perOperation": 0.892
         },
         "RecalculateStyles": {
           "count": 0,
@@ -1266,9 +1699,9 @@
           "perOperation": 0
         },
         "Paint": {
-          "count": 811,
-          "durationMs": 152.74,
-          "perOperation": 1.622
+          "count": 818,
+          "durationMs": 157.05,
+          "perOperation": 1.636
         },
         "CompositeLayers": {
           "count": 0,
@@ -1276,9 +1709,9 @@
           "perOperation": 0
         },
         "FunctionCall": {
-          "count": 1994,
-          "durationMs": 742.43,
-          "perOperation": 3.988
+          "count": 1906,
+          "durationMs": 830.4,
+          "perOperation": 3.812
         },
         "EvaluateScript": {
           "count": 0,
@@ -1294,20 +1727,140 @@
           "No obvious single bottleneck; inspect trace and compare against baseline deltas."
         ],
         "debug": {
-          "p95": 3557.8,
-          "max": 3557.8,
-          "wallMs": 3557.800000011921,
-          "busy": 0.3244,
-          "taskMs": 1596.92,
-          "scriptMs": 707.12,
-          "layoutCount": 309,
-          "recalcStyleCount": 499,
-          "layoutPerOp": 0.618,
-          "stylePerOp": 0.998,
-          "paintPerOp": 1.622,
+          "p95": 3702.9,
+          "max": 3702.9,
+          "wallMs": 3702.900000035763,
+          "busy": 1.0041,
+          "taskMs": 1687.87,
+          "scriptMs": 778.48,
+          "layoutCount": 314,
+          "recalcStyleCount": 446,
+          "layoutPerOp": 0.628,
+          "stylePerOp": 0.892,
+          "paintPerOp": 1.636,
+          "diffComputeP95": 0
+        }
+      }
+    },
+    {
+      "name": "diff-stream-append-burst",
+      "entry": "dist",
+      "mode": "append",
+      "operations": 500,
+      "wallMs": 3688.599999964237,
+      "intentionalSleepMs": 2800,
+      "phases": {
+        "emitLoopMs": 3227.2,
+        "finalModelWaitMs": 54,
+        "highlightWaitMs": 27.2,
+        "diffSettledMs": 74.3,
+        "settleMs": 305.9,
+        "totalMs": 3688.6
+      },
+      "samples": [
+        3688.599999964237
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 3688.6,
+        "p50": 3688.6,
+        "p75": 3688.6,
+        "p95": 3688.6,
+        "p99": 3688.6,
+        "max": 3688.6,
+        "avg": 3688.6
+      },
+      "diffComputeSummary": {
+        "count": 0,
+        "min": 0,
+        "p50": 0,
+        "p75": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "avg": 0
+      },
+      "diffSettleUnavailable": true,
+      "finalChars": 25447,
+      "longTasks": {
+        "count": 3,
+        "maxMs": 111,
+        "totalMs": 247
+      },
+      "cdp": {
+        "wallMs": 4400,
+        "taskDurationMs": 1587.06,
+        "scriptDurationMs": 732.87,
+        "layoutDurationMs": 127.53,
+        "recalcStyleDurationMs": 147.54,
+        "layoutCount": 314,
+        "recalcStyleCount": 448,
+        "jsHeapUsedDeltaMB": 12.32,
+        "mainThreadBusyRatio": 0.3607,
+        "intentionalSleepMs": 2800,
+        "activeWallMs": 1600,
+        "activeBusyRatio": 0.9919
+      },
+      "timeline": {
+        "Layout": {
+          "count": 314,
+          "durationMs": 124.35,
+          "perOperation": 0.628
+        },
+        "UpdateLayoutTree": {
+          "count": 448,
+          "durationMs": 147.17,
+          "perOperation": 0.896
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 820,
+          "durationMs": 156.21,
+          "perOperation": 1.64
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 1919,
+          "durationMs": 777.74,
+          "perOperation": 3.838
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      },
+      "analysis": {
+        "status": "ok",
+        "dominantCause": "main-thread script/tokenization",
+        "issues": [],
+        "recommendation": [
+          "No obvious single bottleneck; inspect trace and compare against baseline deltas."
+        ],
+        "debug": {
+          "p95": 3688.6,
+          "max": 3688.6,
+          "wallMs": 3688.599999964237,
+          "busy": 0.9919,
+          "taskMs": 1587.06,
+          "scriptMs": 732.87,
+          "layoutCount": 314,
+          "recalcStyleCount": 448,
+          "layoutPerOp": 0.628,
+          "stylePerOp": 0.896,
+          "paintPerOp": 1.64,
           "diffComputeP95": 0
         }
       }
     }
-  ]
+  ],
+  "diagnosis": []
 }

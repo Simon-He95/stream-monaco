@@ -26,6 +26,7 @@ async function loadDiffEditorManager() {
       let value = initialValue
       let languageId = initialLanguage
       let alternativeVersionId = 1
+      let getValueCallCount = 0
       const contentSizeListeners = new Set<() => void>()
       const contentChangeListeners = new Set<() => void>()
 
@@ -49,7 +50,11 @@ async function loadDiffEditorManager() {
 
       return {
         getValue() {
+          getValueCallCount += 1
           return value
+        },
+        __getGetValueCallCount() {
+          return getValueCallCount
         },
         setValue(next: string) {
           value = next
@@ -336,6 +341,48 @@ describe('DiffEditorManager inline streaming updates', () => {
     expect(appendOriginalSpy).toHaveBeenCalledOnce()
     expect(appendModifiedSpy).toHaveBeenCalledOnce()
     await waitForAsyncWork()
+    manager.cleanup()
+  })
+
+  it('does not reread modified model value during pending replacement flush', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+    const before = modified.__getGetValueCallCount()
+
+    manager.updateDiff(
+      'line 1\nline 2\n',
+      'line 1\nchanged\n',
+      'typescript',
+    )
+    await waitForAsyncWork()
+
+    expect(modified.__getGetValueCallCount()).toBe(before)
+    expect(modified.getValue()).toBe('line 1\nchanged\n')
+    manager.cleanup()
+  })
+
+  it('does not reread modified model value during updateModified replacement', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+    const before = modified.__getGetValueCallCount()
+
+    manager.updateModified('line 1\nchanged\n', 'typescript')
+    await waitForAsyncWork()
+
+    expect(modified.__getGetValueCallCount()).toBe(before)
+    expect(modified.getValue()).toBe('line 1\nchanged\n')
+    manager.cleanup()
+  })
+
+  it('syncs external modified edits before updateModified replacement', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+
+    modified.setValue('external\n')
+    manager.updateModified('external changed\n', 'typescript')
+    await waitForAsyncWork()
+
+    expect(modified.getValue()).toBe('external changed\n')
     manager.cleanup()
   })
 

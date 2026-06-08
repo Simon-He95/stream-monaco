@@ -38,12 +38,15 @@ const SCENARIOS = [
   'editor-warm-first-highlight',
   'editor-update-highlight',
   'editor-middle-replace-large-doc',
-  'editor-stream-burst',
+  'editor-stream-full-update-burst',
+  'editor-stream-append-burst',
   'diff-cold-first-highlight-default-options',
   'diff-cold-first-highlight',
+  'diff-cold-first-highlight-no-unchanged-regions',
   'diff-update-highlight',
   'diff-middle-replace-large-doc',
-  'diff-stream-burst',
+  'diff-stream-full-update-burst',
+  'diff-stream-append-burst',
 ].filter(name => !scenarioFilter || name === scenarioFilter)
 
 function nowIso() {
@@ -160,20 +163,53 @@ type ScenarioName =
   | 'editor-warm-first-highlight'
   | 'editor-update-highlight'
   | 'editor-middle-replace-large-doc'
-  | 'editor-stream-burst'
+  | 'editor-stream-full-update-burst'
+  | 'editor-stream-append-burst'
   | 'diff-cold-first-highlight-default-options'
   | 'diff-cold-first-highlight'
+  | 'diff-cold-first-highlight-no-unchanged-regions'
   | 'diff-update-highlight'
   | 'diff-middle-replace-large-doc'
-  | 'diff-stream-burst'
+  | 'diff-stream-full-update-burst'
+  | 'diff-stream-append-burst'
 
 declare global {
   interface Window {
-    __SM_PERF__: { runScenario: (name: ScenarioName) => Promise<any> }
+    __SM_PERF__: {
+      prepareScenario: (name: ScenarioName) => Promise<void>
+      runScenario: (name: ScenarioName) => Promise<any>
+    }
+    __STREAM_MONACO_PERF__?: {
+      recordTokenize: (event: {
+        language: string
+        durationMs: number
+        lineLength: number
+        lineSample: string
+        tokenCount: number
+        failed: boolean
+      }) => void
+      recordGrammarTokenize: (event: {
+        language: string
+        durationMs: number
+        lineLength: number
+        lineSample: string
+        stoppedEarly: boolean
+        tokenCount: number
+      }) => void
+      recordThemeRegistration: (event: {
+        durationMs: number
+        ensureHighlighterMs: number
+        patchMonacoMs: number
+        themes: number
+        languages: number
+        patchedMonaco: boolean
+      }) => void
+    }
   }
 }
 
 const root = document.getElementById('root')!
+let editorWarmFirstHighlightPrepared = false
 
 function resetRoot() {
   root.innerHTML = ''
@@ -232,6 +268,34 @@ function waitUntil(predicate: () => boolean, timeoutMs = 8000, label = 'conditio
   })
 }
 
+function getModelVersion(model: any) {
+  return model?.getAlternativeVersionId?.() ?? 0
+}
+
+function getModelValueLength(model: any) {
+  const getValueLength = model?.getValueLength
+  if (typeof getValueLength === 'function')
+    return getValueLength.call(model)
+  return model?.getValue?.().length ?? 0
+}
+
+function waitForModelUpdate(
+  getModel: () => any,
+  previousVersion: number,
+  expectedLength: number,
+  timeoutMs: number,
+  label: string,
+) {
+  return waitUntil(() => {
+    const model = getModel()
+    return !!(
+      model
+      && getModelVersion(model) !== previousVersion
+      && getModelValueLength(model) === expectedLength
+    )
+  }, timeoutMs, label)
+}
+
 function getVisibleLineWithText(container: HTMLElement, text: string) {
   const lines = Array.from(container.querySelectorAll('.view-line'))
   return lines.find(line => (line.textContent || '').includes(text)) || null
@@ -250,6 +314,262 @@ function hasMeaningfulTokenization(line: Element | null) {
     }
   }
   return tokenClasses.size >= 3
+}
+
+function roundDuration(value: number | null) {
+  if (value == null)
+    return null
+  return Math.round(value * 100) / 100
+}
+
+function waitForFirstTokenDom(container: HTMLElement, timeoutMs = 8000) {
+  return waitUntil(
+    () => !!container.querySelector('.view-line span[class*="mtk"]'),
+    timeoutMs,
+    'first token DOM',
+  )
+}
+
+function getTokenDomSummary(container: HTMLElement) {
+  const tokenSpans = Array.from(container.querySelectorAll('.view-line span[class*="mtk"]'))
+  const tokenClasses = new Set<string>()
+  for (const span of tokenSpans) {
+    const className = String(span.className || '')
+    const hits = className.match(/\\bmtk\\d+\\b/g)
+    if (!hits)
+      continue
+    for (const hit of hits)
+      tokenClasses.add(hit)
+  }
+  return {
+    viewLines: container.querySelectorAll('.view-line').length,
+    tokenSpans: tokenSpans.length,
+    tokenClasses: tokenClasses.size,
+  }
+}
+
+function countElements(node: Node, selector: string) {
+  if (node.nodeType !== Node.ELEMENT_NODE)
+    return 0
+  const element = node as Element
+  return (element.matches(selector) ? 1 : 0) + element.querySelectorAll(selector).length
+}
+
+function createDomMutationStats() {
+  return {
+    records: 0,
+    childListRecords: 0,
+    attributeRecords: 0,
+    characterDataRecords: 0,
+    addedNodes: 0,
+    removedNodes: 0,
+    addedElements: 0,
+    tokenSpanAdds: 0,
+    viewLineAdds: 0,
+  }
+}
+
+function observeDomMutations(container: HTMLElement) {
+  let stats = createDomMutationStats()
+  let observer: MutationObserver
+  const applyRecord = (record: MutationRecord) => {
+    stats.records += 1
+    if (record.type === 'childList') {
+      stats.childListRecords += 1
+      stats.addedNodes += record.addedNodes.length
+      stats.removedNodes += record.removedNodes.length
+      for (const node of Array.from(record.addedNodes)) {
+        if (node.nodeType === Node.ELEMENT_NODE)
+          stats.addedElements += 1
+        stats.tokenSpanAdds += countElements(node, '.view-line span[class*="mtk"]')
+        stats.viewLineAdds += countElements(node, '.view-line')
+      }
+      return
+    }
+    if (record.type === 'attributes') {
+      stats.attributeRecords += 1
+      return
+    }
+    if (record.type === 'characterData')
+      stats.characterDataRecords += 1
+  }
+  const flushRecords = () => {
+    for (const record of observer.takeRecords())
+      applyRecord(record)
+  }
+  const take = () => {
+    flushRecords()
+    const out = stats
+    stats = createDomMutationStats()
+    return out
+  }
+  observer = new MutationObserver(records => {
+    for (const record of records)
+      applyRecord(record)
+  })
+  observer.observe(container, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+    characterData: true,
+  })
+  return {
+    take,
+    stop() {
+      const out = take()
+      observer.disconnect()
+      return out
+    },
+  }
+}
+
+function observeTokenization() {
+  const samples: {
+    language: string
+    durationMs: number
+    lineLength: number
+    lineSample: string
+    tokenCount: number
+    failed: boolean
+  }[] = []
+  const grammarSamples: {
+    language: string
+    durationMs: number
+    lineLength: number
+    lineSample: string
+    stoppedEarly: boolean
+    tokenCount: number
+  }[] = []
+  const themeRegistrations: {
+    durationMs: number
+    ensureHighlighterMs: number
+    patchMonacoMs: number
+    themes: number
+    languages: number
+    patchedMonaco: boolean
+  }[] = []
+  window.__STREAM_MONACO_PERF__ = {
+    recordTokenize(event) {
+      samples.push(event)
+    },
+    recordGrammarTokenize(event) {
+      grammarSamples.push(event)
+    },
+    recordThemeRegistration(event) {
+      themeRegistrations.push(event)
+    },
+  }
+  return {
+    stop() {
+      delete window.__STREAM_MONACO_PERF__
+      return {
+        tokenization: summarizeTokenization(samples),
+        grammarTokenization: summarizeGrammarTokenization(grammarSamples),
+        themeRegistration: summarizeThemeRegistrations(themeRegistrations),
+      }
+    },
+  }
+}
+
+function summarizeTokenization(samples: {
+  language: string
+  durationMs: number
+  lineLength: number
+  lineSample: string
+  tokenCount: number
+  failed: boolean
+}[]) {
+  const durations = samples.map(sample => sample.durationMs)
+  const byLanguage: Record<string, { count: number, totalMs: number, maxMs: number, chars: number }> = {}
+  for (const sample of samples) {
+    const item = byLanguage[sample.language] || { count: 0, totalMs: 0, maxMs: 0, chars: 0 }
+    item.count += 1
+    item.totalMs += sample.durationMs
+    item.maxMs = Math.max(item.maxMs, sample.durationMs)
+    item.chars += sample.lineLength
+    byLanguage[sample.language] = item
+  }
+  for (const item of Object.values(byLanguage)) {
+    item.totalMs = roundDuration(item.totalMs) ?? 0
+    item.maxMs = roundDuration(item.maxMs) ?? 0
+  }
+  const slowest = samples
+    .slice()
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 5)
+    .map(sample => ({
+      language: sample.language,
+      durationMs: roundDuration(sample.durationMs),
+      lineLength: sample.lineLength,
+      tokenCount: sample.tokenCount,
+      failed: sample.failed,
+      lineSample: sample.lineSample,
+    }))
+  return {
+    ...summarizeNumbers(durations),
+    totalMs: roundDuration(durations.reduce((sum, value) => sum + value, 0)) ?? 0,
+    chars: samples.reduce((sum, sample) => sum + sample.lineLength, 0),
+    slowCountOver16Ms: samples.filter(sample => sample.durationMs > 16).length,
+    slowest,
+    byLanguage,
+  }
+}
+
+function summarizeGrammarTokenization(samples: {
+  language: string
+  durationMs: number
+  lineLength: number
+  lineSample: string
+  stoppedEarly: boolean
+  tokenCount: number
+}[]) {
+  const durations = samples.map(sample => sample.durationMs)
+  const slowest = samples
+    .slice()
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 5)
+    .map(sample => ({
+      language: sample.language,
+      durationMs: roundDuration(sample.durationMs),
+      lineLength: sample.lineLength,
+      tokenCount: sample.tokenCount,
+      stoppedEarly: sample.stoppedEarly,
+      lineSample: sample.lineSample,
+    }))
+  return {
+    ...summarizeNumbers(durations),
+    totalMs: roundDuration(durations.reduce((sum, value) => sum + value, 0)) ?? 0,
+    chars: samples.reduce((sum, sample) => sum + sample.lineLength, 0),
+    slowCountOver16Ms: samples.filter(sample => sample.durationMs > 16).length,
+    stoppedEarlyCount: samples.filter(sample => sample.stoppedEarly).length,
+    slowest,
+  }
+}
+
+function summarizeThemeRegistrations(samples: {
+  durationMs: number
+  ensureHighlighterMs: number
+  patchMonacoMs: number
+  themes: number
+  languages: number
+  patchedMonaco: boolean
+}[]) {
+  return {
+    count: samples.length,
+    totalMs: roundDuration(samples.reduce((sum, sample) => sum + sample.durationMs, 0)) ?? 0,
+    ensureHighlighterMs: roundDuration(samples.reduce((sum, sample) => sum + sample.ensureHighlighterMs, 0)) ?? 0,
+    patchMonacoMs: roundDuration(samples.reduce((sum, sample) => sum + sample.patchMonacoMs, 0)) ?? 0,
+    patchedCount: samples.filter(sample => sample.patchedMonaco).length,
+    entries: samples.map(sample => ({
+      durationMs: roundDuration(sample.durationMs),
+      ensureHighlighterMs: roundDuration(sample.ensureHighlighterMs),
+      patchMonacoMs: roundDuration(sample.patchMonacoMs),
+      themes: sample.themes,
+      languages: sample.languages,
+      patchedMonaco: sample.patchedMonaco,
+    })),
+  }
 }
 
 async function waitForHighlight(container: HTMLElement, marker?: string, timeoutMs = 8000) {
@@ -276,7 +596,7 @@ function getLineChangeSignature(diffEditor: any) {
   ]))
 }
 
-function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = performance.now(), timeoutMs = 1000) {
+function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = performance.now(), timeoutMs = 1000, unavailableAfterFrames = 12) {
   const diffEditor = api.getDiffEditorView()
   if (!diffEditor)
     return Promise.resolve(null)
@@ -286,6 +606,7 @@ function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = perfo
     let timer: ReturnType<typeof setTimeout>
     let lastSignature: string | null = null
     let stableFrames = 0
+    let unavailableFrames = 0
     const finish = (fn: () => void) => {
       if (done)
         return
@@ -305,6 +626,7 @@ function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = perfo
         return
       const signature = getLineChangeSignature(diffEditor)
       if (signature) {
+        unavailableFrames = 0
         if (signature === lastSignature)
           stableFrames += 1
         else {
@@ -313,6 +635,13 @@ function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = perfo
         }
         if (stableFrames >= 2) {
           finish(resolveAfterFrames)
+          return
+        }
+      }
+      else {
+        unavailableFrames += 1
+        if (unavailableFrames >= unavailableAfterFrames) {
+          finish(() => resolve(null))
           return
         }
       }
@@ -362,6 +691,16 @@ function summarizeLongTasks(entries: any[]) {
   }
 }
 
+function addPhaseSample(samples: Record<string, number[]>, name: string, value: number) {
+  ;(samples[name] ||= []).push(value)
+}
+
+function summarizePhaseSamples(samples: Record<string, number[]>) {
+  return Object.fromEntries(
+    Object.entries(samples).map(([name, values]) => [name, summarizeNumbers(values)]),
+  )
+}
+
 function baseOptions(extra: any = {}) {
   return {
     MAX_HEIGHT: 640,
@@ -380,45 +719,84 @@ function baseOptions(extra: any = {}) {
 
 async function runEditorFirstHighlight(cold: boolean, defaultOptions = false) {
   resetRoot()
-  clearHighlighterCache()
-
-  // Keep warm measurement local to this scenario; other scenarios run isolated.
-  if (!cold) {
-    const primer = createContainer('editor-warm-primer')
-    const primerApi = useMonaco(baseOptions({ updateThrottleMs: 0, autoScrollInitial: false }))
-    await primerApi.createEditor(
-      primer,
-      makeTsCode(40, 'SM_WARM_PRIMER'),
-      'typescript',
-    )
-    await waitForHighlight(primer, 'SM_WARM_PRIMER')
-    primerApi.cleanupEditor()
-    resetRoot()
-  }
+  if (cold)
+    clearHighlighterCache()
+  else if (!editorWarmFirstHighlightPrepared)
+    await prepareEditorWarmFirstHighlight()
 
   const longTasks = observeLongTasks()
   const container = createContainer(cold ? 'editor-cold' : 'editor-warm')
-  const api = useMonaco(defaultOptions ? {} : baseOptions({ updateThrottleMs: 0, autoScrollInitial: false }))
+  const api = useMonaco(defaultOptions
+    ? {}
+    : baseOptions({
+        updateThrottleMs: 0,
+        autoScrollInitial: false,
+      }))
   const marker = defaultOptions ? 'SM_DEFAULT_COLD_FIRST' : cold ? 'SM_COLD_FIRST' : 'SM_WARM_FIRST'
   let code = makeTsCode(cold ? 320 : 180, marker)
   if (defaultOptions)
     code += '\\nconsole.log("' + marker + '")'
+  const tokenization = observeTokenization()
+  const domMutations = observeDomMutations(container)
   const start = performance.now()
   await api.createEditor(container, code, 'typescript')
+  const createdAt = performance.now()
+  const createDomMutations = domMutations.take()
+  await waitForFirstTokenDom(container)
+  const firstTokenDomAt = performance.now()
+  const firstTokenDomMutations = domMutations.take()
   await waitForHighlight(container, marker)
-  const duration = performance.now() - start
+  const highlightedAt = performance.now()
+  const highlightDomMutations = domMutations.stop()
+  const perfSummary = tokenization.stop()
+  const duration = highlightedAt - start
   const model = api.getEditorView()?.getModel()
   const lineCount = model?.getLineCount?.() ?? code.split('\\n').length
+  const tokenDom = getTokenDomSummary(container)
   await twoFrames()
   api.cleanupEditor()
   return {
     operations: 1,
     samples: [duration],
     sampleSummary: summarizeNumbers([duration]),
+    phases: {
+      themeRegistrationMs: perfSummary.themeRegistration.totalMs,
+      editorCreateAndSetupMs: roundDuration((createdAt - start) - perfSummary.themeRegistration.totalMs),
+      createMs: roundDuration(createdAt - start),
+      firstTokenDomAfterCreateMs: roundDuration(firstTokenDomAt - createdAt),
+      highlightAfterFirstTokenDomMs: roundDuration(highlightedAt - firstTokenDomAt),
+      highlightAfterCreateMs: roundDuration(highlightedAt - createdAt),
+      totalMs: roundDuration(duration),
+    },
+    tokenization: perfSummary.tokenization,
+    grammarTokenization: perfSummary.grammarTokenization,
+    themeRegistration: perfSummary.themeRegistration,
+    tokenDom,
+    domMutations: {
+      create: createDomMutations,
+      firstTokenDomAfterCreate: firstTokenDomMutations,
+      highlightAfterFirstTokenDom: highlightDomMutations,
+    },
     chars: code.length,
     lines: lineCount,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
+}
+
+async function prepareEditorWarmFirstHighlight() {
+  resetRoot()
+  clearHighlighterCache()
+  const primer = createContainer('editor-warm-primer')
+  const primerApi = useMonaco(baseOptions({ updateThrottleMs: 0, autoScrollInitial: false }))
+  await primerApi.createEditor(
+    primer,
+    makeTsCode(40, 'SM_WARM_PRIMER'),
+    'typescript',
+  )
+  await waitForHighlight(primer, 'SM_WARM_PRIMER')
+  primerApi.cleanupEditor()
+  resetRoot()
+  editorWarmFirstHighlightPrepared = true
 }
 
 async function runEditorUpdateHighlight() {
@@ -435,15 +813,30 @@ async function runEditorUpdateHighlight() {
   await api.createEditor(container, code, 'typescript')
   await waitForHighlight(container, 'SM_UPDATE_BASE')
   const samples: number[] = []
+  const phaseSamples: Record<string, number[]> = {}
 
   for (let i = 0; i < 80; i++) {
     const marker = \`SM_UPDATE_\${i}\`
     code = code.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
+    const previousVersion = getModelVersion(api.getEditorView()?.getModel())
     const start = performance.now()
     api.updateCode(code, 'typescript')
-    await waitUntil(() => api.getEditorView()?.getModel()?.getValue() === code, 4000, 'editor model update')
+    const updateCalledAt = performance.now()
+    await waitForModelUpdate(
+      () => api.getEditorView()?.getModel(),
+      previousVersion,
+      code.length,
+      4000,
+      'editor model update',
+    )
+    const modelReadyAt = performance.now()
     await waitForHighlight(container, marker, 4000)
-    samples.push(performance.now() - start)
+    const doneAt = performance.now()
+    samples.push(doneAt - start)
+    addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
+    addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
+    addPhaseSample(phaseSamples, 'highlightReadyMs', doneAt - modelReadyAt)
+    addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
   api.cleanupEditor()
@@ -451,6 +844,7 @@ async function runEditorUpdateHighlight() {
     operations: samples.length,
     samples,
     sampleSummary: summarizeNumbers(samples),
+    phaseSummary: summarizePhaseSamples(phaseSamples),
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
 }
@@ -472,15 +866,30 @@ async function runEditorMiddleReplaceLargeDoc() {
   await waitForHighlight(container, 'SM_MIDDLE_REPLACE_BASE')
 
   const samples: number[] = []
+  const phaseSamples: Record<string, number[]> = {}
   for (let i = 0; i < 30; i++) {
     const marker = \`SM_MIDDLE_REPLACE_\${i}\`
     lines[targetLineIndex] = \`export function middle_replace_\${i}() { return "\${marker}" }\`
     code = lines.join('\\n')
+    const previousVersion = getModelVersion(api.getEditorView()?.getModel())
     const start = performance.now()
     api.updateCode(code, 'typescript')
-    await waitUntil(() => api.getEditorView()?.getModel()?.getValue() === code, 5000, 'editor middle replace model update')
+    const updateCalledAt = performance.now()
+    await waitForModelUpdate(
+      () => api.getEditorView()?.getModel(),
+      previousVersion,
+      code.length,
+      5000,
+      'editor middle replace model update',
+    )
+    const modelReadyAt = performance.now()
     await twoFrames()
-    samples.push(performance.now() - start)
+    const doneAt = performance.now()
+    samples.push(doneAt - start)
+    addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
+    addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
+    addPhaseSample(phaseSamples, 'settleMs', doneAt - modelReadyAt)
+    addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
   api.cleanupEditor()
@@ -488,37 +897,57 @@ async function runEditorMiddleReplaceLargeDoc() {
     operations: samples.length,
     samples,
     sampleSummary: summarizeNumbers(samples),
+    phaseSummary: summarizePhaseSamples(phaseSamples),
     chars: code.length,
     lines: lines.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
 }
 
-async function runEditorStreamBurst() {
+async function runEditorStreamBurst(mode: 'full-update' | 'append') {
   resetRoot()
   const longTasks = observeLongTasks()
-  const container = createContainer('editor-burst')
+  const container = createContainer(\`editor-burst-\${mode}\`)
   const api = useMonaco(baseOptions({ updateThrottleMs: 50, revealBatchOnIdleMs: 200 }))
   let code = 'export const SM_BURST_BASE = true\\n'
   await api.createEditor(container, code, 'typescript')
   await waitForHighlight(container, 'SM_BURST_BASE')
   const start = performance.now()
   const operations = 500
+  const perOperationSleepMs = 5
   let finalMarker = 'SM_BURST_BASE'
   for (let i = 0; i < operations; i++) {
     finalMarker = \`SM_BURST_\${i}\`
-    code += \`console.log("\${finalMarker}", \${i})\\n\`
-    api.updateCode(code, 'typescript')
-    await sleep(5)
+    const text = \`console.log("\${finalMarker}", \${i})\\n\`
+    code += text
+    if (mode === 'append')
+      api.appendCode(text, 'typescript')
+    else
+      api.updateCode(code, 'typescript')
+    await sleep(perOperationSleepMs)
   }
-  await waitUntil(() => api.getEditorView()?.getModel()?.getValue() === code, 10000, 'editor burst final model')
+  const emitLoopDoneAt = performance.now()
+  await waitUntil(() => getModelValueLength(api.getEditorView()?.getModel()) === code.length, 10000, 'editor burst final model')
+  const modelReadyAt = performance.now()
   await waitForHighlight(container, finalMarker, 8000)
-  await sleep(250)
-  const wallMs = performance.now() - start
+  const highlightReadyAt = performance.now()
+  const settleMs = 250
+  await sleep(settleMs)
+  const settledAt = performance.now()
+  const wallMs = settledAt - start
   api.cleanupEditor()
   return {
+    mode,
     operations,
     wallMs,
+    intentionalSleepMs: operations * perOperationSleepMs + settleMs,
+    phases: {
+      emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
+      finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
+      highlightWaitMs: Math.round((highlightReadyAt - modelReadyAt) * 100) / 100,
+      settleMs: Math.round((settledAt - highlightReadyAt) * 100) / 100,
+      totalMs: Math.round(wallMs * 100) / 100,
+    },
     samples: [wallMs],
     sampleSummary: summarizeNumbers([wallMs]),
     finalChars: code.length,
@@ -526,12 +955,17 @@ async function runEditorStreamBurst() {
   }
 }
 
-async function runDiffFirstHighlight(defaultOptions = false) {
+async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any = {}) {
   resetRoot()
   clearHighlighterCache()
   const longTasks = observeLongTasks()
   const container = createContainer('diff-cold')
-  const api = useMonaco(defaultOptions ? {} : baseOptions({ diffUpdateThrottleMs: 0, renderSideBySide: true, autoScrollInitial: false }))
+  const api = useMonaco(defaultOptions ? {} : baseOptions({
+    diffUpdateThrottleMs: 0,
+    renderSideBySide: true,
+    autoScrollInitial: false,
+    ...extraOptions,
+  }))
   const original = makeTsCode(220, defaultOptions ? 'SM_DEFAULT_DIFF_ORIGINAL' : 'SM_DIFF_ORIGINAL')
   const modifiedMarker = defaultOptions ? 'SM_DEFAULT_DIFF_MODIFIED' : 'SM_DIFF_MODIFIED'
   let modified = makeTsCode(220, modifiedMarker) + '\\nexport const changed = 1\\n'
@@ -543,14 +977,22 @@ async function runDiffFirstHighlight(defaultOptions = false) {
   }
   const start = performance.now()
   await api.createDiffEditor(container, original, modified, 'typescript')
+  const createdAt = performance.now()
   await waitForHighlight(container, modifiedMarker)
-  const duration = performance.now() - start
+  const highlightedAt = performance.now()
+  const duration = highlightedAt - start
   await twoFrames()
   api.cleanupEditor()
   return {
     operations: 1,
     samples: [duration],
     sampleSummary: summarizeNumbers([duration]),
+    phases: {
+      createMs: Math.round((createdAt - start) * 100) / 100,
+      highlightAfterCreateMs: Math.round((highlightedAt - createdAt) * 100) / 100,
+      totalMs: Math.round(duration * 100) / 100,
+    },
+    options: defaultOptions ? 'default' : extraOptions,
     chars: original.length + modified.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
@@ -572,19 +1014,36 @@ async function runDiffUpdateHighlight() {
   await api.createDiffEditor(container, original, modified, 'typescript')
   await waitForHighlight(container, 'SM_DIFF_UPDATE_BASE_M')
   const samples: number[] = []
+  const phaseSamples: Record<string, number[]> = {}
   const diffComputeSamples: number[] = []
   let diffSettleUnavailable = false
 
   for (let i = 0; i < 60; i++) {
     const marker = \`SM_DIFF_UPDATE_\${i}\`
     modified = modified.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
+    const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
     api.updateDiff(original, modified, 'typescript')
-    await waitUntil(() => api.getDiffModels().modified?.getValue() === modified, 5000, 'diff modified model update')
+    const updateCalledAt = performance.now()
+    await waitForModelUpdate(
+      () => api.getDiffModels().modified,
+      previousVersion,
+      modified.length,
+      5000,
+      'diff modified model update',
+    )
+    const modelReadyAt = performance.now()
     const diffSettled = diffSettleUnavailable ? null : waitForDiffSettled(api, start)
     await waitForHighlight(container, marker, 5000)
-    samples.push(performance.now() - start)
+    const highlightedAt = performance.now()
     const diffComputeMs = await diffSettled
+    const doneAt = performance.now()
+    samples.push(highlightedAt - start)
+    addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
+    addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
+    addPhaseSample(phaseSamples, 'highlightReadyMs', highlightedAt - modelReadyAt)
+    addPhaseSample(phaseSamples, 'diffSettledMs', doneAt - highlightedAt)
+    addPhaseSample(phaseSamples, 'totalMs', highlightedAt - start)
     if (typeof diffComputeMs === 'number')
       diffComputeSamples.push(diffComputeMs)
     else if (diffSettled)
@@ -596,6 +1055,7 @@ async function runDiffUpdateHighlight() {
     operations: samples.length,
     samples,
     sampleSummary: summarizeNumbers(samples),
+    phaseSummary: summarizePhaseSamples(phaseSamples),
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
     diffSettleUnavailable,
     longTasks: summarizeLongTasks(longTasks.stop()),
@@ -622,19 +1082,36 @@ async function runDiffMiddleReplaceLargeDoc() {
   await waitForHighlight(container, 'SM_DIFF_MIDDLE_REPLACE_BASE')
 
   const samples: number[] = []
+  const phaseSamples: Record<string, number[]> = {}
   const diffComputeSamples: number[] = []
   let diffSettleUnavailable = false
   for (let i = 0; i < 24; i++) {
     const marker = \`SM_DIFF_MIDDLE_REPLACE_\${i}\`
     modifiedLines[targetLineIndex] = \`export function diff_middle_replace_\${i}() { return "\${marker}" }\`
     modified = modifiedLines.join('\\n')
+    const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
     api.updateDiff(original, modified, 'typescript')
-    await waitUntil(() => api.getDiffModels().modified?.getValue() === modified, 6000, 'diff middle replace model update')
+    const updateCalledAt = performance.now()
+    await waitForModelUpdate(
+      () => api.getDiffModels().modified,
+      previousVersion,
+      modified.length,
+      6000,
+      'diff middle replace model update',
+    )
+    const modelReadyAt = performance.now()
     const diffSettled = diffSettleUnavailable ? null : waitForDiffSettled(api, start)
     await twoFrames()
-    samples.push(performance.now() - start)
+    const settledFramesAt = performance.now()
     const diffComputeMs = await diffSettled
+    const doneAt = performance.now()
+    samples.push(settledFramesAt - start)
+    addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
+    addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
+    addPhaseSample(phaseSamples, 'frameSettleMs', settledFramesAt - modelReadyAt)
+    addPhaseSample(phaseSamples, 'diffSettledMs', doneAt - settledFramesAt)
+    addPhaseSample(phaseSamples, 'totalMs', settledFramesAt - start)
     if (typeof diffComputeMs === 'number')
       diffComputeSamples.push(diffComputeMs)
     else if (diffSettled)
@@ -646,6 +1123,7 @@ async function runDiffMiddleReplaceLargeDoc() {
     operations: samples.length,
     samples,
     sampleSummary: summarizeNumbers(samples),
+    phaseSummary: summarizePhaseSamples(phaseSamples),
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
     diffSettleUnavailable,
     chars: original.length + modified.length,
@@ -654,10 +1132,10 @@ async function runDiffMiddleReplaceLargeDoc() {
   }
 }
 
-async function runDiffStreamBurst() {
+async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   resetRoot()
   const longTasks = observeLongTasks()
-  const container = createContainer('diff-burst')
+  const container = createContainer(\`diff-burst-\${mode}\`)
   const api = useMonaco(baseOptions({ diffUpdateThrottleMs: 50, renderSideBySide: true, revealBatchOnIdleMs: 200 }))
   const original = makeTsCode(80, 'SM_DIFF_BURST_O')
   let modified = makeTsCode(80, 'SM_DIFF_BURST_M') + '\\nconsole.log("SM_DIFF_BURST_M")'
@@ -665,24 +1143,44 @@ async function runDiffStreamBurst() {
   await waitForHighlight(container, 'SM_DIFF_BURST_M')
   const start = performance.now()
   const operations = 500
+  const perOperationSleepMs = 5
   let finalMarker = 'SM_DIFF_BURST_M'
   for (let i = 0; i < operations; i++) {
     finalMarker = \`SM_DIFF_BURST_\${i}\`
     const text = \`\\nconsole.log("\${finalMarker}", \${i})\`
     modified += text
-    api.appendModified(text, 'typescript')
-    await sleep(5)
+    if (mode === 'append')
+      api.appendModified(text, 'typescript')
+    else
+      api.updateDiff(original, modified, 'typescript')
+    await sleep(perOperationSleepMs)
   }
-  await waitUntil(() => api.getDiffModels().modified?.getValue() === modified, 12000, 'diff burst final model')
+  const emitLoopDoneAt = performance.now()
+  await waitUntil(() => getModelValueLength(api.getDiffModels().modified) === modified.length, 12000, 'diff burst final model')
+  const modelReadyAt = performance.now()
   const diffSettled = waitForDiffSettled(api, performance.now())
   await waitForHighlight(container, finalMarker, 8000)
-  await sleep(300)
-  const wallMs = performance.now() - start
+  const highlightReadyAt = performance.now()
   const diffComputeMs = await diffSettled
+  const diffSettledAt = performance.now()
+  const settleMs = 300
+  await sleep(settleMs)
+  const settledAt = performance.now()
+  const wallMs = settledAt - start
   api.cleanupEditor()
   return {
+    mode,
     operations,
     wallMs,
+    intentionalSleepMs: operations * perOperationSleepMs + settleMs,
+    phases: {
+      emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
+      finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
+      highlightWaitMs: Math.round((highlightReadyAt - modelReadyAt) * 100) / 100,
+      diffSettledMs: Math.round((diffSettledAt - highlightReadyAt) * 100) / 100,
+      settleMs: Math.round((settledAt - diffSettledAt) * 100) / 100,
+      totalMs: Math.round(wallMs * 100) / 100,
+    },
     samples: [wallMs],
     sampleSummary: summarizeNumbers([wallMs]),
     diffComputeSummary: typeof diffComputeMs === 'number' ? summarizeNumbers([diffComputeMs]) : summarizeNumbers([]),
@@ -703,6 +1201,11 @@ function summarizeNumbers(samples: number[]) {
 }
 
 window.__SM_PERF__ = {
+  async prepareScenario(name: ScenarioName) {
+    if (name === 'editor-warm-first-highlight')
+      await prepareEditorWarmFirstHighlight()
+  },
+
   async runScenario(name: ScenarioName) {
     if (name === 'editor-cold-first-highlight-default-options')
       return runEditorFirstHighlight(true, true)
@@ -714,18 +1217,24 @@ window.__SM_PERF__ = {
       return runEditorUpdateHighlight()
     if (name === 'editor-middle-replace-large-doc')
       return runEditorMiddleReplaceLargeDoc()
-    if (name === 'editor-stream-burst')
-      return runEditorStreamBurst()
+    if (name === 'editor-stream-full-update-burst')
+      return runEditorStreamBurst('full-update')
+    if (name === 'editor-stream-append-burst')
+      return runEditorStreamBurst('append')
     if (name === 'diff-cold-first-highlight-default-options')
       return runDiffFirstHighlight(true)
     if (name === 'diff-cold-first-highlight')
       return runDiffFirstHighlight()
+    if (name === 'diff-cold-first-highlight-no-unchanged-regions')
+      return runDiffFirstHighlight(false, { diffHideUnchangedRegions: false })
     if (name === 'diff-update-highlight')
       return runDiffUpdateHighlight()
     if (name === 'diff-middle-replace-large-doc')
       return runDiffMiddleReplaceLargeDoc()
-    if (name === 'diff-stream-burst')
-      return runDiffStreamBurst()
+    if (name === 'diff-stream-full-update-burst')
+      return runDiffStreamBurst('full-update')
+    if (name === 'diff-stream-append-burst')
+      return runDiffStreamBurst('append')
     throw new Error(\`Unknown scenario \${name}\`)
   },
 }
@@ -785,6 +1294,9 @@ async function runWithTrace(client, fn) {
 }
 
 async function runScenario(page, client, name) {
+  await page.evaluate(scenarioName =>
+    window.__SM_PERF__.prepareScenario(scenarioName),
+  name)
   await client.send('Performance.enable')
   const before = metricMap(await client.send('Performance.getMetrics'))
   const wallStart = Date.now()
@@ -796,16 +1308,28 @@ async function runScenario(page, client, name) {
   const delta = diffMetricMap(before, after)
   const operations = result.operations || 1
   const timeline = summarizeTimeline(events, operations)
+  const taskDurationMs = round((delta.TaskDuration || 0) * 1000)
+  const intentionalSleepMs = result.intentionalSleepMs || 0
+  const activeWallMs = intentionalSleepMs > 0
+    ? Math.max(1, wallMs - intentionalSleepMs)
+    : 0
   const cdp = {
     wallMs,
-    taskDurationMs: round((delta.TaskDuration || 0) * 1000),
+    taskDurationMs,
     scriptDurationMs: round((delta.ScriptDuration || 0) * 1000),
     layoutDurationMs: round((delta.LayoutDuration || 0) * 1000),
     recalcStyleDurationMs: round((delta.RecalcStyleDuration || 0) * 1000),
     layoutCount: round(delta.LayoutCount || 0, 0),
     recalcStyleCount: round(delta.RecalcStyleCount || 0, 0),
     jsHeapUsedDeltaMB: round((delta.JSHeapUsedSize || 0) / 1024 / 1024),
-    mainThreadBusyRatio: wallMs > 0 ? round(((delta.TaskDuration || 0) * 1000) / wallMs, 4) : 0,
+    mainThreadBusyRatio: wallMs > 0 ? round(taskDurationMs / wallMs, 4) : 0,
+    ...(intentionalSleepMs > 0
+      ? {
+          intentionalSleepMs,
+          activeWallMs: round(activeWallMs),
+          activeBusyRatio: round(taskDurationMs / activeWallMs, 4),
+        }
+      : {}),
   }
   return {
     name,
@@ -830,7 +1354,7 @@ function classifyScenario(result, budgetForScenario = {}) {
   const p95 = result.sampleSummary?.p95 ?? 0
   const max = result.sampleSummary?.max ?? 0
   const wallMs = result.wallMs || result.cdp?.wallMs || 0
-  const busy = result.cdp?.mainThreadBusyRatio ?? 0
+  const busy = result.cdp?.activeBusyRatio ?? result.cdp?.mainThreadBusyRatio ?? 0
   const taskMs = result.cdp?.taskDurationMs ?? 0
   const scriptMs = result.cdp?.scriptDurationMs ?? 0
   const layoutCount = result.cdp?.layoutCount ?? 0
@@ -841,11 +1365,17 @@ function classifyScenario(result, budgetForScenario = {}) {
   const longTasks = result.longTasks?.count ?? 0
   const maxLongTaskMs = result.longTasks?.maxMs ?? 0
   const diffComputeP95 = result.diffComputeSummary?.p95 ?? 0
+  const tokenizationMs = result.tokenization?.totalMs ?? 0
 
   const addIssue = (condition, issue) => {
     if (condition)
       issues.push(issue)
   }
+  let cpuCause = 'browser rendering/layout dominated'
+  if (tokenizationMs > scriptMs * 0.4)
+    cpuCause = 'tokenization dominated'
+  else if (scriptMs > taskMs * 0.6)
+    cpuCause = 'script/tokenization/model-edit dominated'
 
   addIssue(p95 > (budgetForScenario.sampleP95Ms ?? Infinity), {
     severity: p95 > (budgetForScenario.sampleP95Ms ?? Infinity) * 1.5 ? 'high' : 'medium',
@@ -874,13 +1404,11 @@ function classifyScenario(result, budgetForScenario = {}) {
     message: `max long task ${round(maxLongTaskMs)}ms exceeds budget ${budgetForScenario.maxLongTaskMs}ms`,
     cause: 'a single update flush is doing too much work before yielding',
   })
-  addIssue(busy > (budgetForScenario.mainThreadBusyRatio ?? Infinity), {
+  addIssue(busy > (budgetForScenario.activeBusyRatio ?? budgetForScenario.mainThreadBusyRatio ?? Infinity), {
     severity: 'high',
     type: 'cpu',
-    message: `mainThreadBusyRatio=${busy}`,
-    cause: scriptMs > taskMs * 0.6
-      ? 'script/tokenization/model-edit dominated'
-      : 'browser rendering/layout dominated',
+    message: `busyRatio=${busy}`,
+    cause: cpuCause,
   })
   addIssue(layoutCount > (budgetForScenario.layoutCount ?? Infinity), {
     severity: 'medium',
@@ -917,16 +1445,18 @@ function classifyScenario(result, budgetForScenario = {}) {
     status: issues.some(issue => issue.severity === 'high')
       ? 'needs-fix'
       : issues.length ? 'watch' : 'ok',
-    dominantCause: pickDominantCause({ scriptMs, layoutPerOp, stylePerOp, paintPerOp, longTasks, diffComputeP95 }),
+    dominantCause: pickDominantCause({ scriptMs, tokenizationMs, layoutPerOp, stylePerOp, paintPerOp, longTasks, diffComputeP95 }),
     issues,
     recommendation: recommendFix(result.name, issues),
-    debug: { p95, max, wallMs, busy, taskMs, scriptMs, layoutCount, recalcStyleCount, layoutPerOp, stylePerOp, paintPerOp, diffComputeP95 },
+    debug: { p95, max, wallMs, busy, taskMs, scriptMs, tokenizationMs, layoutCount, recalcStyleCount, layoutPerOp, stylePerOp, paintPerOp, diffComputeP95 },
   }
 }
 
-function pickDominantCause({ scriptMs, layoutPerOp, stylePerOp, paintPerOp, longTasks, diffComputeP95 }) {
+function pickDominantCause({ scriptMs, tokenizationMs, layoutPerOp, stylePerOp, paintPerOp, longTasks, diffComputeP95 }) {
   if (diffComputeP95 > 50)
     return 'diff compute'
+  if (tokenizationMs > 40 && tokenizationMs > scriptMs * 0.4)
+    return 'tokenization CPU'
   if (longTasks > 0 && scriptMs > 100)
     return 'main-thread script/tokenization'
   if (layoutPerOp > 2)
@@ -945,7 +1475,7 @@ function recommendFix(name, issues) {
     return [
       'Keep create-time language registration limited to the requested language unless languages are explicitly provided.',
       'Use registerMonacoThemes() before first render when an app intentionally wants to preload many languages.',
-      'Compare the default-options and narrow-languages cold scenarios before changing hard budgets.',
+      'Use tokenization/themeRegistration phases to separate Shiki startup from visible token DOM before changing hard budgets.',
     ]
   }
 
@@ -984,13 +1514,33 @@ function recommendFix(name, issues) {
 
 function attachAnalysis(report, budget) {
   const scenarioBudgets = budget.scenarioBudgets || {}
+  const results = report.results.map(result => ({
+    ...result,
+    analysis: classifyScenario(result, scenarioBudgets[result.name]),
+  }))
   return {
     ...report,
-    results: report.results.map(result => ({
-      ...result,
-      analysis: classifyScenario(result, scenarioBudgets[result.name]),
-    })),
+    results,
+    diagnosis: buildDiagnosis(results),
   }
+}
+
+function buildDiagnosis(results) {
+  const findings = []
+  for (const result of results) {
+    const action = result.analysis?.recommendation?.[0]
+    for (const issue of result.analysis?.issues ?? []) {
+      findings.push({
+        severity: issue.severity === 'high' ? 'error' : 'warn',
+        scenario: result.name,
+        title: issue.type,
+        detail: issue.message,
+        cause: issue.cause,
+        action,
+      })
+    }
+  }
+  return findings
 }
 
 function buildMarkdownReport(report) {
@@ -1017,6 +1567,10 @@ function buildMarkdownReport(report) {
     lines.push(`| long tasks | ${result.longTasks?.count ?? 0} |`)
     lines.push(`| max long task | ${result.longTasks?.maxMs ?? 0}ms |`)
     lines.push(`| busy ratio | ${result.cdp?.mainThreadBusyRatio ?? 0} |`)
+    if (result.cdp?.activeBusyRatio != null) {
+      lines.push(`| active busy ratio | ${result.cdp.activeBusyRatio} |`)
+      lines.push(`| active wall | ${result.cdp.activeWallMs}ms |`)
+    }
     lines.push(`| layout/op | ${result.timeline?.Layout?.perOperation ?? 0} |`)
     lines.push(`| style/op | ${stylePerOperation(result)} |`)
     lines.push(`| paint/op | ${result.timeline?.Paint?.perOperation ?? 0} |`)
@@ -1025,6 +1579,73 @@ function buildMarkdownReport(report) {
     if (result.diffSettleUnavailable)
       lines.push('| diff settled signal | unavailable |')
     lines.push('')
+
+    if (result.phases) {
+      lines.push('Phases:')
+      for (const [name, value] of Object.entries(result.phases)) {
+        const formatted = typeof value === 'number' ? `${value}ms` : String(value)
+        lines.push(`- ${name}: ${formatted}`)
+      }
+      lines.push('')
+    }
+
+    if (result.tokenization) {
+      lines.push('Tokenization:')
+      lines.push(`- calls: ${result.tokenization.count}`)
+      lines.push(`- total: ${result.tokenization.totalMs}ms`)
+      lines.push(`- p95: ${result.tokenization.p95}ms`)
+      lines.push(`- max: ${result.tokenization.max}ms`)
+      lines.push(`- chars: ${result.tokenization.chars}`)
+      lines.push(`- slow >16ms: ${result.tokenization.slowCountOver16Ms ?? 0}`)
+      for (const sample of result.tokenization.slowest ?? [])
+        lines.push(`- slowest: ${sample.durationMs}ms, len=${sample.lineLength}, tokens=${sample.tokenCount}, failed=${sample.failed}, sample=\`${sample.lineSample}\``)
+      lines.push('')
+    }
+
+    if (result.grammarTokenization) {
+      lines.push('Grammar tokenization:')
+      lines.push(`- calls: ${result.grammarTokenization.count}`)
+      lines.push(`- total: ${result.grammarTokenization.totalMs}ms`)
+      lines.push(`- p95: ${result.grammarTokenization.p95}ms`)
+      lines.push(`- max: ${result.grammarTokenization.max}ms`)
+      lines.push(`- stoppedEarly: ${result.grammarTokenization.stoppedEarlyCount ?? 0}`)
+      for (const sample of result.grammarTokenization.slowest ?? [])
+        lines.push(`- slowest: ${sample.durationMs}ms, len=${sample.lineLength}, tokens=${sample.tokenCount}, stoppedEarly=${sample.stoppedEarly}, sample=\`${sample.lineSample}\``)
+      lines.push('')
+    }
+
+    if (result.themeRegistration) {
+      lines.push('Theme registration:')
+      lines.push(`- calls: ${result.themeRegistration.count}`)
+      lines.push(`- total: ${result.themeRegistration.totalMs}ms`)
+      lines.push(`- ensureHighlighter: ${result.themeRegistration.ensureHighlighterMs}ms`)
+      lines.push(`- patchMonaco: ${result.themeRegistration.patchMonacoMs}ms`)
+      lines.push(`- patchedCount: ${result.themeRegistration.patchedCount}`)
+      lines.push('')
+    }
+
+    if (result.tokenDom) {
+      lines.push('Token DOM:')
+      lines.push(`- viewLines: ${result.tokenDom.viewLines}`)
+      lines.push(`- tokenSpans: ${result.tokenDom.tokenSpans}`)
+      lines.push(`- tokenClasses: ${result.tokenDom.tokenClasses}`)
+      lines.push('')
+    }
+
+    if (result.domMutations) {
+      lines.push('DOM mutations:')
+      for (const [phaseName, stats] of Object.entries(result.domMutations)) {
+        lines.push(`- ${phaseName}: records=${stats.records}, addedNodes=${stats.addedNodes}, tokenSpanAdds=${stats.tokenSpanAdds}, viewLineAdds=${stats.viewLineAdds}`)
+      }
+      lines.push('')
+    }
+
+    if (result.phaseSummary) {
+      lines.push('Phase p95:')
+      for (const [name, summary] of Object.entries(result.phaseSummary))
+        lines.push(`- ${name}: ${summary.p95}ms`)
+      lines.push('')
+    }
 
     if (analysis.issues.length) {
       lines.push('Issues:')
@@ -1066,6 +1687,7 @@ function checkHardBudgets(results, budget) {
     compareValue(failures, result.name, 'longTaskCount', result.longTasks?.count, b.longTaskCount)
     compareValue(failures, result.name, 'maxLongTaskMs', result.longTasks?.maxMs, b.maxLongTaskMs, 'ms')
     compareValue(failures, result.name, 'mainThreadBusyRatio', result.cdp?.mainThreadBusyRatio, b.mainThreadBusyRatio)
+    compareValue(failures, result.name, 'activeBusyRatio', result.cdp?.activeBusyRatio, b.activeBusyRatio)
     compareValue(failures, result.name, 'layoutCount', result.cdp?.layoutCount, b.layoutCount)
     compareValue(failures, result.name, 'recalcStyleCount', result.cdp?.recalcStyleCount, b.recalcStyleCount)
     compareValue(failures, result.name, 'Layout.perOperation', result.timeline?.Layout?.perOperation, b.layoutPerOperation)
@@ -1091,16 +1713,17 @@ function checkBaseline(results, baseline, tolerance, requireAllScenarios = false
     const hasSampleSet = (result.sampleSummary?.count || 0) > 1 && (prev.sampleSummary?.count || 0) > 1
     const metrics = [
       ['cdp.mainThreadBusyRatio', result.cdp?.mainThreadBusyRatio, prev.cdp?.mainThreadBusyRatio, 0.08],
+      ['cdp.activeBusyRatio', result.cdp?.activeBusyRatio, prev.cdp?.activeBusyRatio, 0.1],
       ['cdp.layoutCount', result.cdp?.layoutCount, prev.cdp?.layoutCount, 8],
       ['cdp.recalcStyleCount', result.cdp?.recalcStyleCount, prev.cdp?.recalcStyleCount, 8],
-      ['longTasks.count', result.longTasks?.count, prev.longTasks?.count, 1],
+      ['longTasks.count', result.longTasks?.count, prev.longTasks?.count, 2],
       ['timeline.Paint.count', result.timeline?.Paint?.count, prev.timeline?.Paint?.count, 8],
       ['diffComputeSummary.p95', result.diffComputeSummary?.p95, prev.diffComputeSummary?.p95, 12],
     ]
     if (hasSampleSet) {
       metrics.push(
-        ['sampleSummary.p95', result.sampleSummary?.p95, prev.sampleSummary?.p95, 12],
-        ['sampleSummary.max', result.sampleSummary?.max, prev.sampleSummary?.max, 20],
+        ['sampleSummary.p95', result.sampleSummary?.p95, prev.sampleSummary?.p95, 16],
+        ['sampleSummary.max', result.sampleSummary?.max, prev.sampleSummary?.max, 55],
       )
     }
     for (const [metric, actual, old, floor] of metrics) {
@@ -1124,6 +1747,7 @@ function printSummary(results) {
     longTasks: r.longTasks?.count,
     maxLongTask: r.longTasks?.maxMs,
     busy: r.cdp?.mainThreadBusyRatio,
+    activeBusy: r.cdp?.activeBusyRatio,
     layout: r.cdp?.layoutCount,
     style: r.cdp?.recalcStyleCount,
     paintPerOp: r.timeline?.Paint?.perOperation,

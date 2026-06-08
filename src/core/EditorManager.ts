@@ -26,6 +26,8 @@ export class EditorManager {
   private minimalEditMaxChangeRatioValue = minimalEditMaxChangeRatio
   private lastUpdateFlushTime = 0
   private updateThrottleTimer: number | null = null
+  private lastAppendFlushTime = 0
+  private appendFlushThrottleTimer: number | null = null
 
   private shouldAutoScroll = true
   private scrollWatcher: any = null
@@ -142,6 +144,10 @@ export class EditorManager {
     if (this.updateThrottleTimer != null) {
       clearTimeout(this.updateThrottleTimer)
       this.updateThrottleTimer = null
+    }
+    if (this.appendFlushThrottleTimer != null) {
+      clearTimeout(this.appendFlushThrottleTimer)
+      this.appendFlushThrottleTimer = null
     }
   }
 
@@ -260,12 +266,16 @@ export class EditorManager {
     // Defer measurement and reveal work to the raf scheduler so we avoid forcing sync layout
     // during hot update paths. This coalesces multiple calls into one frame.
     this.rafScheduler.schedule('maybe-scroll', () => {
+      if (!(this.autoScrollOnUpdate && this.shouldAutoScroll)) {
+        this.dlog('maybeScrollToBottom skipped (auto-scroll disabled)', { autoScrollOnUpdate: this.autoScrollOnUpdate, shouldAutoScroll: this.shouldAutoScroll, targetLine })
+        return
+      }
       const hasVS = this.hasVerticalScrollbar()
 
       this.dlog('maybeScrollToBottom called', { autoScrollOnUpdate: this.autoScrollOnUpdate, shouldAutoScroll: this.shouldAutoScroll, hasVerticalScrollbar: hasVS, targetLine })
 
-      if (!(this.autoScrollOnUpdate && this.shouldAutoScroll && this.hasVerticalScrollbar())) {
-        this.dlog('maybeScrollToBottom skipped (auto-scroll conditions not met)')
+      if (!hasVS) {
+        this.dlog('maybeScrollToBottom skipped (no vertical scrollbar)')
         return
       }
 
@@ -614,7 +624,8 @@ export class EditorManager {
       setLast: (v: number) => { this.lastScrollTop = v },
     })
 
-    this.maybeScrollToBottom()
+    if (this.shouldAutoScroll)
+      this.maybeScrollToBottom()
 
     return this.editorView
   }
@@ -830,9 +841,35 @@ export class EditorManager {
       this.appendBuffer.push(appendText)
       if (!this.appendBufferScheduled) {
         this.appendBufferScheduled = true
-        this.rafScheduler.schedule('append', () => this.flushAppendBuffer())
+        this.scheduleFlushAppendBuffer()
       }
     }
+  }
+
+  private scheduleFlushAppendBuffer() {
+    const schedule = () => {
+      this.rafScheduler.schedule('append', () => this.flushAppendBuffer())
+    }
+
+    if (!this.updateThrottleMs) {
+      schedule()
+      return
+    }
+
+    const now = Date.now()
+    const since = now - this.lastAppendFlushTime
+    if (since >= this.updateThrottleMs) {
+      schedule()
+      return
+    }
+
+    if (this.appendFlushThrottleTimer != null)
+      return
+    const wait = this.updateThrottleMs - since
+    this.appendFlushThrottleTimer = (setTimeout(() => {
+      this.appendFlushThrottleTimer = null
+      schedule()
+    }, wait) as unknown) as number
   }
 
   private applyMinimalEdit(prev: string, next: string) {
@@ -889,6 +926,7 @@ export class EditorManager {
     if (this.appendBuffer.length === 0)
       return
     this.appendBufferScheduled = false
+    this.lastAppendFlushTime = Date.now()
     const model = this.editorView.getModel()
     if (!model) {
       this.appendBuffer.length = 0
@@ -947,6 +985,11 @@ export class EditorManager {
       clearTimeout(this.updateThrottleTimer)
       this.updateThrottleTimer = null
       this.rafScheduler.schedule('update', () => this.flushPendingUpdate())
+    }
+    if (!this.updateThrottleMs && this.appendFlushThrottleTimer != null) {
+      clearTimeout(this.appendFlushThrottleTimer)
+      this.appendFlushThrottleTimer = null
+      this.rafScheduler.schedule('append', () => this.flushAppendBuffer())
     }
   }
 
