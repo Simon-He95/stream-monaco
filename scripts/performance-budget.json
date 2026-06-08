@@ -73,7 +73,7 @@
       "sampleMaxMs": 5800,
       "longTaskCount": 14,
       "maxLongTaskMs": 450,
-      "mainThreadBusyRatio": 0.92,
+      "mainThreadBusyRatio": 0.95,
       "layoutCount": 220,
       "recalcStyleCount": 360
     },

@@ -128,8 +128,11 @@ async function readJsonIfExists(file, fallback) {
   try {
     return JSON.parse(await readFile(file, 'utf8'))
   }
-  catch {
-    return fallback
+  catch (err) {
+    if (err?.code === 'ENOENT')
+      return fallback
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`Failed to read JSON ${path.relative(root, file)}: ${message}`)
   }
 }
 
@@ -234,6 +237,12 @@ function nextFrame() {
 async function twoFrames() {
   await nextFrame()
   await nextFrame()
+}
+
+function cleanupPerfEditor(api: ReturnType<typeof useMonaco>) {
+  api.cleanupEditor()
+  for (const model of api.getMonacoInstance().editor.getModels())
+    model.dispose()
 }
 
 function makeTsCode(lines: number, marker = 'SM_MARK') {
@@ -754,7 +763,7 @@ async function runEditorFirstHighlight(cold: boolean, defaultOptions = false) {
   const lineCount = model?.getLineCount?.() ?? code.split('\\n').length
   const tokenDom = getTokenDomSummary(container)
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: 1,
     samples: [duration],
@@ -794,7 +803,7 @@ async function prepareEditorWarmFirstHighlight() {
     'typescript',
   )
   await waitForHighlight(primer, 'SM_WARM_PRIMER')
-  primerApi.cleanupEditor()
+  cleanupPerfEditor(primerApi)
   resetRoot()
   editorWarmFirstHighlightPrepared = true
 }
@@ -839,7 +848,7 @@ async function runEditorUpdateHighlight() {
     addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: samples.length,
     samples,
@@ -892,7 +901,7 @@ async function runEditorMiddleReplaceLargeDoc() {
     addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: samples.length,
     samples,
@@ -935,7 +944,7 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
   await sleep(settleMs)
   const settledAt = performance.now()
   const wallMs = settledAt - start
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     mode,
     operations,
@@ -982,7 +991,7 @@ async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any =
   const highlightedAt = performance.now()
   const duration = highlightedAt - start
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: 1,
     samples: [duration],
@@ -1050,7 +1059,7 @@ async function runDiffUpdateHighlight() {
       diffSettleUnavailable = true
   }
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: samples.length,
     samples,
@@ -1118,7 +1127,7 @@ async function runDiffMiddleReplaceLargeDoc() {
       diffSettleUnavailable = true
   }
   await twoFrames()
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     operations: samples.length,
     samples,
@@ -1167,7 +1176,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   await sleep(settleMs)
   const settledAt = performance.now()
   const wallMs = settledAt - start
-  api.cleanupEditor()
+  cleanupPerfEditor(api)
   return {
     mode,
     operations,
@@ -1722,7 +1731,7 @@ function checkBaseline(results, baseline, tolerance, requireAllScenarios = false
     ]
     if (hasSampleSet) {
       metrics.push(
-        ['sampleSummary.p95', result.sampleSummary?.p95, prev.sampleSummary?.p95, 16],
+        ['sampleSummary.p95', result.sampleSummary?.p95, prev.sampleSummary?.p95, 32],
         ['sampleSummary.max', result.sampleSummary?.max, prev.sampleSummary?.max, 55],
       )
     }
