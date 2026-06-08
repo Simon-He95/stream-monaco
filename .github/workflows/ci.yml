@@ -112,3 +112,13 @@ jobs:
 
       - name: Height stability smoke
         run: pnpm smoke:height-stability
+
+      - name: Performance gate
+        run: pnpm perf:gate
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-monaco-performance-report
+          path: .perf/*.json

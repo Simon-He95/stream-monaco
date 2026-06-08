@@ -1,0 +1,660 @@
+{
+  "generatedAt": "2026-06-08T10:20:47.090Z",
+  "entry": "dist",
+  "scenarios": [
+    "editor-cold-first-highlight",
+    "editor-warm-first-highlight",
+    "editor-update-highlight",
+    "editor-stream-burst",
+    "diff-cold-first-highlight",
+    "diff-update-highlight",
+    "diff-stream-burst"
+  ],
+  "repeat": 1,
+  "results": [
+    {
+      "name": "editor-cold-first-highlight",
+      "entry": "dist",
+      "operations": 1,
+      "samples": [
+        208.60000002384186
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 208.6,
+        "p50": 208.6,
+        "p75": 208.6,
+        "p95": 208.6,
+        "p99": 208.6,
+        "max": 208.6,
+        "avg": 208.6
+      },
+      "chars": 26754,
+      "lines": 322,
+      "longTasks": {
+        "count": 2,
+        "maxMs": 78,
+        "totalMs": 137
+      },
+      "cdp": {
+        "wallMs": 297,
+        "taskDurationMs": 219.16,
+        "scriptDurationMs": 106.85,
+        "layoutDurationMs": 29.55,
+        "recalcStyleDurationMs": 3.14,
+        "layoutCount": 9,
+        "recalcStyleCount": 9,
+        "jsHeapUsedDeltaMB": 1.33,
+        "mainThreadBusyRatio": 0.7379
+      },
+      "timeline": {
+        "Layout": {
+          "count": 9,
+          "durationMs": 29.46,
+          "perOperation": 9
+        },
+        "UpdateLayoutTree": {
+          "count": 9,
+          "durationMs": 3.14,
+          "perOperation": 9
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 16,
+          "durationMs": 0.3,
+          "perOperation": 16
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 18,
+          "durationMs": 71.43,
+          "perOperation": 18
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "editor-warm-first-highlight",
+      "entry": "dist",
+      "operations": 1,
+      "samples": [
+        33
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 33,
+        "p50": 33,
+        "p75": 33,
+        "p95": 33,
+        "p99": 33,
+        "max": 33,
+        "avg": 33
+      },
+      "chars": 14994,
+      "lines": 182,
+      "longTasks": {
+        "count": 3,
+        "maxMs": 78,
+        "totalMs": 201
+      },
+      "cdp": {
+        "wallMs": 113,
+        "taskDurationMs": 100.85,
+        "scriptDurationMs": 90.5,
+        "layoutDurationMs": 0.85,
+        "recalcStyleDurationMs": 1.23,
+        "layoutCount": 7,
+        "recalcStyleCount": 7,
+        "jsHeapUsedDeltaMB": 0.51,
+        "mainThreadBusyRatio": 0.8925
+      },
+      "timeline": {
+        "Layout": {
+          "count": 7,
+          "durationMs": 0.79,
+          "perOperation": 7
+        },
+        "UpdateLayoutTree": {
+          "count": 7,
+          "durationMs": 1.23,
+          "perOperation": 7
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 14,
+          "durationMs": 0.17,
+          "perOperation": 14
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 19,
+          "durationMs": 90.99,
+          "perOperation": 19
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "editor-update-highlight",
+      "entry": "dist",
+      "operations": 80,
+      "samples": [
+        84.5,
+        82.39999997615814,
+        83.79999995231628,
+        82.39999997615814,
+        81.30000001192093,
+        85.19999998807907,
+        84.09999996423721,
+        83.40000003576279,
+        83.69999998807907,
+        81.89999997615814,
+        84.69999998807907,
+        80.30000001192093,
+        83.39999997615814,
+        82.5,
+        85.80000001192093,
+        84.09999996423721,
+        83.90000003576279,
+        79.30000001192093,
+        86.80000001192093,
+        83.19999998807907,
+        82.89999997615814,
+        82.90000003576279,
+        84,
+        83.39999997615814,
+        83.10000002384186,
+        82.39999997615814,
+        84.5,
+        83.69999998807907,
+        82.29999995231628,
+        80.80000001192093,
+        85.60000002384186,
+        81.19999998807907,
+        85.30000001192093,
+        84.39999997615814,
+        82.40000003576279,
+        82.79999995231628,
+        83.80000001192093,
+        84.30000001192093,
+        81,
+        84.69999998807907,
+        82.89999997615814,
+        83.5,
+        84,
+        83.30000001192093,
+        82.69999998807907,
+        84.39999997615814,
+        82.40000003576279,
+        83.29999995231628,
+        84,
+        82.20000004768372,
+        83.69999998807907,
+        83.30000001192093,
+        84.29999995231628,
+        82.90000003576279,
+        82.89999997615814,
+        84.19999998807907,
+        82.40000003576279,
+        83.09999996423721,
+        82.90000003576279,
+        83.59999996423721,
+        84.60000002384186,
+        82.60000002384186,
+        80,
+        86.5,
+        83.89999997615814,
+        82.19999998807907,
+        84.19999998807907,
+        83.40000003576279,
+        83.80000001192093,
+        83,
+        83.09999996423721,
+        83.60000002384186,
+        83.09999996423721,
+        83.90000003576279,
+        83.19999998807907,
+        82.89999997615814,
+        83.60000002384186,
+        80.69999998807907,
+        86.5,
+        81.90000003576279
+      ],
+      "sampleSummary": {
+        "count": 80,
+        "min": 79.3,
+        "p50": 83.3,
+        "p75": 84,
+        "p95": 85.6,
+        "p99": 86.8,
+        "max": 86.8,
+        "avg": 83.31
+      },
+      "longTasks": {
+        "count": 3,
+        "maxMs": 78,
+        "totalMs": 201
+      },
+      "cdp": {
+        "wallMs": 6835,
+        "taskDurationMs": 4046.85,
+        "scriptDurationMs": 3822.04,
+        "layoutDurationMs": 15.57,
+        "recalcStyleDurationMs": 13.11,
+        "layoutCount": 87,
+        "recalcStyleCount": 87,
+        "jsHeapUsedDeltaMB": 1.97,
+        "mainThreadBusyRatio": 0.5921
+      },
+      "timeline": {
+        "Layout": {
+          "count": 87,
+          "durationMs": 14.59,
+          "perOperation": 1.0875
+        },
+        "UpdateLayoutTree": {
+          "count": 87,
+          "durationMs": 13.17,
+          "perOperation": 1.0875
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 174,
+          "durationMs": 5.28,
+          "perOperation": 2.175
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 2689,
+          "durationMs": 3857.08,
+          "perOperation": 33.6125
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "editor-stream-burst",
+      "entry": "dist",
+      "operations": 500,
+      "wallMs": 3739.699999988079,
+      "samples": [
+        3739.699999988079
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 3739.7,
+        "p50": 3739.7,
+        "p75": 3739.7,
+        "p95": 3739.7,
+        "p99": 3739.7,
+        "max": 3739.7,
+        "avg": 3739.7
+      },
+      "finalChars": 16314,
+      "longTasks": {
+        "count": 3,
+        "maxMs": 78,
+        "totalMs": 201
+      },
+      "cdp": {
+        "wallMs": 3870,
+        "taskDurationMs": 779.47,
+        "scriptDurationMs": 429.52,
+        "layoutDurationMs": 44.71,
+        "recalcStyleDurationMs": 62.23,
+        "layoutCount": 79,
+        "recalcStyleCount": 85,
+        "jsHeapUsedDeltaMB": 1.12,
+        "mainThreadBusyRatio": 0.2014
+      },
+      "timeline": {
+        "Layout": {
+          "count": 79,
+          "durationMs": 43.61,
+          "perOperation": 0.158
+        },
+        "UpdateLayoutTree": {
+          "count": 85,
+          "durationMs": 62.08,
+          "perOperation": 0.17
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 213,
+          "durationMs": 18.31,
+          "perOperation": 0.426
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 1183,
+          "durationMs": 446.28,
+          "perOperation": 2.366
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "diff-cold-first-highlight",
+      "entry": "dist",
+      "operations": 1,
+      "samples": [
+        100.19999998807907
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 100.2,
+        "p50": 100.2,
+        "p75": 100.2,
+        "p95": 100.2,
+        "p99": 100.2,
+        "max": 100.2,
+        "avg": 100.2
+      },
+      "chars": 36740,
+      "longTasks": {
+        "count": 3,
+        "maxMs": 78,
+        "totalMs": 201
+      },
+      "cdp": {
+        "wallMs": 165,
+        "taskDurationMs": 147.41,
+        "scriptDurationMs": 84.45,
+        "layoutDurationMs": 4.97,
+        "recalcStyleDurationMs": 11.69,
+        "layoutCount": 16,
+        "recalcStyleCount": 24,
+        "jsHeapUsedDeltaMB": 0.49,
+        "mainThreadBusyRatio": 0.8934
+      },
+      "timeline": {
+        "Layout": {
+          "count": 16,
+          "durationMs": 4.82,
+          "perOperation": 16
+        },
+        "UpdateLayoutTree": {
+          "count": 24,
+          "durationMs": 11.71,
+          "perOperation": 24
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 45,
+          "durationMs": 1.77,
+          "perOperation": 45
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 57,
+          "durationMs": 93.46,
+          "perOperation": 57
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "diff-update-highlight",
+      "entry": "dist",
+      "operations": 60,
+      "samples": [
+        79.5,
+        81.80000001192093,
+        83.59999996423721,
+        83.30000001192093,
+        83.69999998807907,
+        83.5,
+        82.5,
+        83.80000001192093,
+        83.90000003576279,
+        82.80000001192093,
+        83.5,
+        83.39999997615814,
+        83.60000002384186,
+        83.09999996423721,
+        83.19999998807907,
+        83.10000002384186,
+        84.10000002384186,
+        80.19999998807907,
+        86.09999996423721,
+        83.20000004768372,
+        82.79999995231628,
+        83.80000001192093,
+        82.89999997615814,
+        84,
+        83.10000002384186,
+        83.80000001192093,
+        83.09999996423721,
+        82.10000002384186,
+        83.89999997615814,
+        83,
+        83.90000003576279,
+        83.5,
+        83.5,
+        82.19999998807907,
+        84.80000001192093,
+        82.19999998807907,
+        83.40000003576279,
+        83.5,
+        83.80000001192093,
+        82.89999997615814,
+        84.10000002384186,
+        83.09999996423721,
+        83.89999997615814,
+        81.69999998807907,
+        83.90000003576279,
+        83.19999998807907,
+        83.5,
+        83.5,
+        84.10000002384186,
+        79.40000003576279,
+        85.89999997615814,
+        83.60000002384186,
+        83.30000001192093,
+        83.39999997615814,
+        83.10000002384186,
+        83.80000001192093,
+        82.59999996423721,
+        82.80000001192093,
+        83.90000003576279,
+        83.69999998807907
+      ],
+      "sampleSummary": {
+        "count": 60,
+        "min": 79.4,
+        "p50": 83.4,
+        "p75": 83.8,
+        "p95": 84.1,
+        "p99": 86.1,
+        "max": 86.1,
+        "avg": 83.24
+      },
+      "longTasks": {
+        "count": 4,
+        "maxMs": 78,
+        "totalMs": 257
+      },
+      "cdp": {
+        "wallMs": 5208,
+        "taskDurationMs": 2887.25,
+        "scriptDurationMs": 2613.68,
+        "layoutDurationMs": 24.44,
+        "recalcStyleDurationMs": 51.86,
+        "layoutCount": 80,
+        "recalcStyleCount": 192,
+        "jsHeapUsedDeltaMB": 5.51,
+        "mainThreadBusyRatio": 0.5544
+      },
+      "timeline": {
+        "Layout": {
+          "count": 80,
+          "durationMs": 23.52,
+          "perOperation": 1.3333
+        },
+        "UpdateLayoutTree": {
+          "count": 192,
+          "durationMs": 51.93,
+          "perOperation": 3.2
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 182,
+          "durationMs": 13.45,
+          "perOperation": 3.0333
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 2185,
+          "durationMs": 2678.08,
+          "perOperation": 36.4167
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    },
+    {
+      "name": "diff-stream-burst",
+      "entry": "dist",
+      "operations": 500,
+      "wallMs": 3690.199999988079,
+      "samples": [
+        3690.199999988079
+      ],
+      "sampleSummary": {
+        "count": 1,
+        "min": 3690.2,
+        "p50": 3690.2,
+        "p75": 3690.2,
+        "p95": 3690.2,
+        "p99": 3690.2,
+        "max": 3690.2,
+        "avg": 3690.2
+      },
+      "finalChars": 25416,
+      "longTasks": {
+        "count": 4,
+        "maxMs": 78,
+        "totalMs": 257
+      },
+      "cdp": {
+        "wallMs": 3869,
+        "taskDurationMs": 1101.47,
+        "scriptDurationMs": 420.22,
+        "layoutDurationMs": 88.92,
+        "recalcStyleDurationMs": 141.9,
+        "layoutCount": 267,
+        "recalcStyleCount": 328,
+        "jsHeapUsedDeltaMB": -4.13,
+        "mainThreadBusyRatio": 0.2847
+      },
+      "timeline": {
+        "Layout": {
+          "count": 267,
+          "durationMs": 86.27,
+          "perOperation": 0.534
+        },
+        "UpdateLayoutTree": {
+          "count": 328,
+          "durationMs": 141.49,
+          "perOperation": 0.656
+        },
+        "RecalculateStyles": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "Paint": {
+          "count": 723,
+          "durationMs": 135.11,
+          "perOperation": 1.446
+        },
+        "CompositeLayers": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        },
+        "FunctionCall": {
+          "count": 1692,
+          "durationMs": 518.78,
+          "perOperation": 3.384
+        },
+        "EvaluateScript": {
+          "count": 0,
+          "durationMs": 0,
+          "perOperation": 0
+        }
+      }
+    }
+  ]
+}
