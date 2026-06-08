@@ -593,77 +593,48 @@ async function waitForHighlight(container: HTMLElement, marker?: string, timeout
   )
 }
 
-function getLineChangeSignature(diffEditor: any) {
-  const changes = diffEditor.getLineChanges?.()
-  if (!changes)
-    return null
-  return JSON.stringify(changes.map((change: any) => [
-    change.originalStartLineNumber,
-    change.originalEndLineNumber,
-    change.modifiedStartLineNumber,
-    change.modifiedEndLineNumber,
-  ]))
+const diffDecorationSelector = [
+  '.line-insert',
+  '.line-delete',
+  '.char-insert',
+  '.char-delete',
+  '.inline-deleted-text',
+  '.inline-deleted-margin-view-zone',
+  '.gutter-insert',
+  '.gutter-delete',
+  '.stream-monaco-fallback-line-insert',
+  '.stream-monaco-fallback-line-delete',
+  '.stream-monaco-fallback-inline-delete-zone',
+  '.stream-monaco-fallback-inline-delete-margin',
+].join(',')
+
+function hasDiffDecorations(container: HTMLElement) {
+  return !!container.querySelector(diffDecorationSelector)
 }
 
-function waitForDiffSettled(api: ReturnType<typeof useMonaco>, startedAt = performance.now(), timeoutMs = 1000, unavailableAfterFrames = 12) {
-  const diffEditor = api.getDiffEditorView()
-  if (!diffEditor)
-    return Promise.resolve(null)
-  return new Promise<number | null>((resolve) => {
-    let done = false
-    let disposable: { dispose?: () => void } | null = null
-    let timer: ReturnType<typeof setTimeout>
-    let lastSignature: string | null = null
-    let stableFrames = 0
-    let unavailableFrames = 0
-    const finish = (fn: () => void) => {
-      if (done)
-        return
-      done = true
-      clearTimeout(timer)
-      try { disposable?.dispose?.() }
-      catch {}
-      fn()
-    }
-    const resolveAfterFrames = () => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => resolve(performance.now() - startedAt))
-      })
-    }
-    const poll = () => {
-      if (done)
-        return
-      const signature = getLineChangeSignature(diffEditor)
-      if (signature) {
-        unavailableFrames = 0
-        if (signature === lastSignature)
-          stableFrames += 1
-        else {
-          lastSignature = signature
-          stableFrames = 0
-        }
-        if (stableFrames >= 2) {
-          finish(resolveAfterFrames)
-          return
-        }
-      }
-      else {
-        unavailableFrames += 1
-        if (unavailableFrames >= unavailableAfterFrames) {
-          finish(() => resolve(null))
-          return
-        }
-      }
-      requestAnimationFrame(poll)
-    }
-    timer = setTimeout(() => {
-      finish(() => resolve(null))
-    }, timeoutMs)
-    disposable = diffEditor.onDidUpdateDiff(() => {
-      finish(resolveAfterFrames)
-    })
-    requestAnimationFrame(poll)
-  })
+async function waitForDiffUpdate(
+  api: ReturnType<typeof useMonaco>,
+  container: HTMLElement,
+  previousModifiedVersion: number,
+  expectedModifiedLength: number,
+  startedAt = performance.now(),
+  timeoutMs = 8000,
+) {
+  if (!api.getDiffEditorView())
+    throw new Error('Diff editor was not created')
+
+  await waitUntil(() => {
+    const modifiedModel = api.getDiffModels().modified
+    return !!(
+      modifiedModel
+      && getModelVersion(modifiedModel) !== previousModifiedVersion
+      && getModelValueLength(modifiedModel) === expectedModifiedLength
+    )
+  }, timeoutMs, 'diff final modified model')
+
+  await waitUntil(() => hasDiffDecorations(container), timeoutMs, 'diff decorations')
+  await twoFrames()
+  return performance.now() - startedAt
 }
 
 function observeLongTasks() {
@@ -1025,13 +996,13 @@ async function runDiffUpdateHighlight() {
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
   const diffComputeSamples: number[] = []
-  let diffSettleUnavailable = false
 
   for (let i = 0; i < 60; i++) {
     const marker = \`SM_DIFF_UPDATE_\${i}\`
     modified = modified.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
     const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
+    const diffUpdated = waitForDiffUpdate(api, container, previousVersion, modified.length, start)
     api.updateDiff(original, modified, 'typescript')
     const updateCalledAt = performance.now()
     await waitForModelUpdate(
@@ -1042,21 +1013,17 @@ async function runDiffUpdateHighlight() {
       'diff modified model update',
     )
     const modelReadyAt = performance.now()
-    const diffSettled = diffSettleUnavailable ? null : waitForDiffSettled(api, start)
     await waitForHighlight(container, marker, 5000)
     const highlightedAt = performance.now()
-    const diffComputeMs = await diffSettled
+    const diffComputeMs = await diffUpdated
     const doneAt = performance.now()
-    samples.push(highlightedAt - start)
+    samples.push(doneAt - start)
     addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
     addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
     addPhaseSample(phaseSamples, 'highlightReadyMs', highlightedAt - modelReadyAt)
     addPhaseSample(phaseSamples, 'diffSettledMs', doneAt - highlightedAt)
-    addPhaseSample(phaseSamples, 'totalMs', highlightedAt - start)
-    if (typeof diffComputeMs === 'number')
-      diffComputeSamples.push(diffComputeMs)
-    else if (diffSettled)
-      diffSettleUnavailable = true
+    addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
+    diffComputeSamples.push(diffComputeMs)
   }
   await twoFrames()
   cleanupPerfEditor(api)
@@ -1066,7 +1033,6 @@ async function runDiffUpdateHighlight() {
     sampleSummary: summarizeNumbers(samples),
     phaseSummary: summarizePhaseSamples(phaseSamples),
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
-    diffSettleUnavailable,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
 }
@@ -1093,13 +1059,13 @@ async function runDiffMiddleReplaceLargeDoc() {
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
   const diffComputeSamples: number[] = []
-  let diffSettleUnavailable = false
   for (let i = 0; i < 24; i++) {
     const marker = \`SM_DIFF_MIDDLE_REPLACE_\${i}\`
     modifiedLines[targetLineIndex] = \`export function diff_middle_replace_\${i}() { return "\${marker}" }\`
     modified = modifiedLines.join('\\n')
     const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
+    const diffUpdated = waitForDiffUpdate(api, container, previousVersion, modified.length, start)
     api.updateDiff(original, modified, 'typescript')
     const updateCalledAt = performance.now()
     await waitForModelUpdate(
@@ -1110,21 +1076,17 @@ async function runDiffMiddleReplaceLargeDoc() {
       'diff middle replace model update',
     )
     const modelReadyAt = performance.now()
-    const diffSettled = diffSettleUnavailable ? null : waitForDiffSettled(api, start)
     await twoFrames()
     const settledFramesAt = performance.now()
-    const diffComputeMs = await diffSettled
+    const diffComputeMs = await diffUpdated
     const doneAt = performance.now()
-    samples.push(settledFramesAt - start)
+    samples.push(doneAt - start)
     addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
     addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
     addPhaseSample(phaseSamples, 'frameSettleMs', settledFramesAt - modelReadyAt)
     addPhaseSample(phaseSamples, 'diffSettledMs', doneAt - settledFramesAt)
-    addPhaseSample(phaseSamples, 'totalMs', settledFramesAt - start)
-    if (typeof diffComputeMs === 'number')
-      diffComputeSamples.push(diffComputeMs)
-    else if (diffSettled)
-      diffSettleUnavailable = true
+    addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
+    diffComputeSamples.push(diffComputeMs)
   }
   await twoFrames()
   cleanupPerfEditor(api)
@@ -1134,7 +1096,6 @@ async function runDiffMiddleReplaceLargeDoc() {
     sampleSummary: summarizeNumbers(samples),
     phaseSummary: summarizePhaseSamples(phaseSamples),
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
-    diffSettleUnavailable,
     chars: original.length + modified.length,
     lines: modifiedLines.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
@@ -1150,13 +1111,17 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   let modified = makeTsCode(80, 'SM_DIFF_BURST_M') + '\\nconsole.log("SM_DIFF_BURST_M")'
   await api.createDiffEditor(container, original, modified, 'typescript')
   await waitForHighlight(container, 'SM_DIFF_BURST_M')
-  const start = performance.now()
   const operations = 500
   const perOperationSleepMs = 5
+  const streamTexts = Array.from({ length: operations }, (_, i) => \`\\nconsole.log("SM_DIFF_BURST_\${i}", \${i})\`)
+  const finalModifiedLength = modified.length + streamTexts.reduce((sum, text) => sum + text.length, 0)
   let finalMarker = 'SM_DIFF_BURST_M'
+  const previousVersion = getModelVersion(api.getDiffModels().modified)
+  const start = performance.now()
+  const diffUpdated = waitForDiffUpdate(api, container, previousVersion, finalModifiedLength, start, 15000)
   for (let i = 0; i < operations; i++) {
     finalMarker = \`SM_DIFF_BURST_\${i}\`
-    const text = \`\\nconsole.log("\${finalMarker}", \${i})\`
+    const text = streamTexts[i]
     modified += text
     if (mode === 'append')
       api.appendModified(text, 'typescript')
@@ -1167,10 +1132,9 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const emitLoopDoneAt = performance.now()
   await waitUntil(() => getModelValueLength(api.getDiffModels().modified) === modified.length, 12000, 'diff burst final model')
   const modelReadyAt = performance.now()
-  const diffSettled = waitForDiffSettled(api, performance.now())
   await waitForHighlight(container, finalMarker, 8000)
   const highlightReadyAt = performance.now()
-  const diffComputeMs = await diffSettled
+  const diffComputeMs = await diffUpdated
   const diffSettledAt = performance.now()
   const settleMs = 300
   await sleep(settleMs)
@@ -1192,8 +1156,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     },
     samples: [wallMs],
     sampleSummary: summarizeNumbers([wallMs]),
-    diffComputeSummary: typeof diffComputeMs === 'number' ? summarizeNumbers([diffComputeMs]) : summarizeNumbers([]),
-    diffSettleUnavailable: diffComputeMs == null,
+    diffComputeSummary: summarizeNumbers([diffComputeMs]),
     finalChars: modified.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
@@ -1727,8 +1690,9 @@ function checkBaseline(results, baseline, tolerance, requireAllScenarios = false
       ['cdp.recalcStyleCount', result.cdp?.recalcStyleCount, prev.cdp?.recalcStyleCount, 8],
       ['longTasks.count', result.longTasks?.count, prev.longTasks?.count, 2],
       ['timeline.Paint.count', result.timeline?.Paint?.count, prev.timeline?.Paint?.count, 8],
-      ['diffComputeSummary.p95', result.diffComputeSummary?.p95, prev.diffComputeSummary?.p95, 12],
     ]
+    if ((result.diffComputeSummary?.count || 0) > 0 && (prev.diffComputeSummary?.count || 0) > 0)
+      metrics.push(['diffComputeSummary.p95', result.diffComputeSummary?.p95, prev.diffComputeSummary?.p95, 12])
     if (hasSampleSet) {
       metrics.push(
         ['sampleSummary.p95', result.sampleSummary?.p95, prev.sampleSummary?.p95, 32],
@@ -1764,6 +1728,28 @@ function printSummary(results) {
   console.table(rows)
 }
 
+function serializeError(error) {
+  if (error instanceof Error)
+    return { message: error.message, stack: error.stack }
+  return String(error)
+}
+
+function buildPerformanceReport(results, budget, extra = {}) {
+  return attachAnalysis({
+    generatedAt: nowIso(),
+    entry,
+    scenarios: SCENARIOS,
+    repeat,
+    results,
+    ...extra,
+  }, budget)
+}
+
+async function writePerformanceReport(report) {
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
+  await writeFile(markdownReportPath, buildMarkdownReport(report))
+}
+
 async function main() {
   await mkdir(perfDir, { recursive: true })
   await rm(perfAppDir, { recursive: true, force: true })
@@ -1781,6 +1767,7 @@ async function main() {
   })
   const url = new URL('/scripts/.perf-app/index.html', baseUrl).toString()
   const results = []
+  let runError = null
 
   try {
     for (const scenario of SCENARIOS) {
@@ -1805,23 +1792,25 @@ async function main() {
       }
     }
   }
+  catch (err) {
+    runError = err
+  }
   finally {
     await browser.close().catch(() => {})
     await server.close().catch(() => {})
+    await rm(perfAppDir, { recursive: true, force: true }).catch(() => {})
   }
 
-  const report = attachAnalysis({
-    generatedAt: nowIso(),
-    entry,
-    scenarios: SCENARIOS,
-    repeat,
-    results,
-  }, budget)
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
-  await writeFile(markdownReportPath, buildMarkdownReport(report))
+  const report = buildPerformanceReport(results, budget, runError
+    ? { failedAt: nowIso(), error: serializeError(runError) }
+    : {})
+  await writePerformanceReport(report)
   printSummary(results)
   console.log(`Performance report written to ${path.relative(root, reportPath)}`)
   console.log(`Markdown report written to ${path.relative(root, markdownReportPath)}`)
+
+  if (runError)
+    throw runError
 
   if (updateBaseline) {
     await writeFile(baselinePath, `${JSON.stringify(report, null, 2)}\n`)
@@ -1830,7 +1819,7 @@ async function main() {
   }
 
   const failures = [
-    ...(requireBaseline && !baseline?.results
+    ...(requireBaseline && !baseline?.results?.length
       ? [
           `Missing performance baseline: ${path.relative(root, baselinePath)}`,
           'Run `pnpm perf:baseline` on a known-good commit and commit the generated file.',
