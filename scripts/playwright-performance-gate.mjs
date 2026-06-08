@@ -2,11 +2,20 @@
 
 import process from 'node:process'
 import path from 'node:path'
+import os from 'node:os'
+import crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { createServer } from 'vite'
 
+const nodeMajor = Number(process.versions.node.split('.')[0])
+if (nodeMajor < 20)
+  throw new Error(`perf gate requires Node >=20, current ${process.version}`)
+
+const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const perfDir = path.join(root, '.perf')
@@ -87,11 +96,61 @@ function summarizeSamples(samples = []) {
   }
 }
 
+function percentile(values, p) {
+  const sorted = values.filter(Number.isFinite).slice().sort((a, b) => a - b)
+  if (!sorted.length)
+    return null
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))]
+}
+
 function round(n, digits = 2) {
   if (!Number.isFinite(n))
     return n
   const p = 10 ** digits
   return Math.round(n * p) / p
+}
+
+async function gitOutput(args) {
+  try {
+    const { stdout } = await execFileAsync('git', args, { cwd: root })
+    return stdout.trim() || null
+  }
+  catch {
+    return null
+  }
+}
+
+async function hashFile(file) {
+  try {
+    return crypto.createHash('sha256').update(await readFile(file)).digest('hex')
+  }
+  catch {
+    return null
+  }
+}
+
+async function readPackageVersion(packageName) {
+  try {
+    const packageJson = JSON.parse(await readFile(path.join(root, 'node_modules', packageName, 'package.json'), 'utf8'))
+    return packageJson.version ?? null
+  }
+  catch {
+    return null
+  }
+}
+
+async function buildEnvironment(chromiumVersion) {
+  return {
+    platform: os.platform(),
+    arch: os.arch(),
+    node: process.version,
+    playwright: await readPackageVersion('playwright'),
+    chromium: chromiumVersion,
+    cpuModel: os.cpus()[0]?.model ?? null,
+    osRelease: os.release(),
+    commit: await gitOutput(['rev-parse', 'HEAD']),
+    lockfileHash: await hashFile(path.join(root, 'pnpm-lock.yaml')),
+  }
 }
 
 function summarizeTimeline(events, operationCount) {
@@ -182,6 +241,7 @@ declare global {
       prepareScenario: (name: ScenarioName) => Promise<void>
       runScenario: (name: ScenarioName) => Promise<any>
     }
+    __STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__?: boolean
     __STREAM_MONACO_PERF__?: {
       recordTokenize: (event: {
         language: string
@@ -458,6 +518,7 @@ function observeTokenization() {
     languages: number
     patchedMonaco: boolean
   }[] = []
+  window.__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__ = true
   window.__STREAM_MONACO_PERF__ = {
     recordTokenize(event) {
       samples.push(event)
@@ -472,6 +533,7 @@ function observeTokenization() {
   return {
     stop() {
       delete window.__STREAM_MONACO_PERF__
+      delete window.__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__
       return {
         tokenization: summarizeTokenization(samples),
         grammarTokenization: summarizeGrammarTokenization(grammarSamples),
@@ -921,6 +983,7 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
     operations,
     wallMs,
     intentionalSleepMs: operations * perOperationSleepMs + settleMs,
+    activeExcludedMs: settleMs,
     phases: {
       emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
       finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
@@ -1146,6 +1209,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     operations,
     wallMs,
     intentionalSleepMs: operations * perOperationSleepMs + settleMs,
+    activeExcludedMs: settleMs,
     phases: {
       emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
       finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
@@ -1282,8 +1346,9 @@ async function runScenario(page, client, name) {
   const timeline = summarizeTimeline(events, operations)
   const taskDurationMs = round((delta.TaskDuration || 0) * 1000)
   const intentionalSleepMs = result.intentionalSleepMs || 0
-  const activeWallMs = intentionalSleepMs > 0
-    ? Math.max(1, wallMs - intentionalSleepMs)
+  const activeExcludedMs = result.activeExcludedMs || 0
+  const activeWallMs = activeExcludedMs > 0
+    ? Math.max(1, wallMs - activeExcludedMs)
     : 0
   const cdp = {
     wallMs,
@@ -1298,6 +1363,7 @@ async function runScenario(page, client, name) {
     ...(intentionalSleepMs > 0
       ? {
           intentionalSleepMs,
+          activeExcludedMs,
           activeWallMs: round(activeWallMs),
           activeBusyRatio: round(taskDurationMs / activeWallMs, 4),
         }
@@ -1536,12 +1602,15 @@ function buildMarkdownReport(report) {
     lines.push(`| p95 | ${result.sampleSummary?.p95 ?? 0}ms |`)
     lines.push(`| max | ${result.sampleSummary?.max ?? 0}ms |`)
     lines.push(`| wall | ${result.wallMs || result.cdp?.wallMs || 0}ms |`)
+    lines.push(`| task duration | ${result.cdp?.taskDurationMs ?? 0}ms |`)
+    lines.push(`| script duration | ${result.cdp?.scriptDurationMs ?? 0}ms |`)
     lines.push(`| long tasks | ${result.longTasks?.count ?? 0} |`)
     lines.push(`| max long task | ${result.longTasks?.maxMs ?? 0}ms |`)
     lines.push(`| busy ratio | ${result.cdp?.mainThreadBusyRatio ?? 0} |`)
     if (result.cdp?.activeBusyRatio != null) {
       lines.push(`| active busy ratio | ${result.cdp.activeBusyRatio} |`)
       lines.push(`| active wall | ${result.cdp.activeWallMs}ms |`)
+      lines.push(`| active excluded | ${result.cdp.activeExcludedMs}ms |`)
     }
     lines.push(`| layout/op | ${result.timeline?.Layout?.perOperation ?? 0} |`)
     lines.push(`| style/op | ${stylePerOperation(result)} |`)
@@ -1734,6 +1803,90 @@ function serializeError(error) {
   return String(error)
 }
 
+function summarizeBaselineFields(items, keys) {
+  const out = {}
+  for (const key of keys) {
+    const value = percentile(items.map(item => item?.[key]), 0.75)
+    if (value == null)
+      continue
+    out[key] = round(value, key === 'count' || key.endsWith('Count') ? 0 : 2)
+  }
+  return out
+}
+
+function summarizeBaselineSummary(items) {
+  const fields = summarizeBaselineFields(items, ['count', 'min', 'p50', 'p75', 'p95', 'p99', 'max', 'avg'])
+  return Object.keys(fields).length ? fields : undefined
+}
+
+function summarizeBaselineTimeline(results) {
+  const names = new Set(results.flatMap(result => Object.keys(result.timeline ?? {})))
+  const out = {}
+  for (const name of names) {
+    const items = results.map(result => result.timeline?.[name]).filter(Boolean)
+    const summary = summarizeBaselineFields(items, ['count', 'durationMs', 'perOperation'])
+    if (Object.keys(summary).length)
+      out[name] = summary
+  }
+  return out
+}
+
+function summarizeBaselineResult(results) {
+  const first = results[0]
+  const samples = results.flatMap(result => Array.isArray(result.samples) ? result.samples : [])
+  const sampleSummary = samples.length
+    ? summarizeSamples(samples)
+    : summarizeBaselineSummary(results.map(result => result.sampleSummary))
+
+  const out = {
+    name: first.name,
+    entry: first.entry,
+    runs: results.length,
+    operations: Math.max(...results.map(result => result.operations || 1)),
+    sampleSummary,
+    longTasks: summarizeBaselineFields(results.map(result => result.longTasks), ['count', 'maxMs', 'totalMs']),
+    cdp: summarizeBaselineFields(results.map(result => result.cdp), [
+      'wallMs',
+      'taskDurationMs',
+      'scriptDurationMs',
+      'layoutDurationMs',
+      'recalcStyleDurationMs',
+      'layoutCount',
+      'recalcStyleCount',
+      'jsHeapUsedDeltaMB',
+      'mainThreadBusyRatio',
+      'intentionalSleepMs',
+      'activeExcludedMs',
+      'activeWallMs',
+      'activeBusyRatio',
+    ]),
+    timeline: summarizeBaselineTimeline(results),
+  }
+
+  const diffComputeSummary = summarizeBaselineSummary(results.map(result => result.diffComputeSummary).filter(Boolean))
+  if (diffComputeSummary)
+    out.diffComputeSummary = diffComputeSummary
+
+  return out
+}
+
+function buildBaselineReport(report) {
+  const byName = new Map()
+  for (const result of report.results) {
+    const results = byName.get(result.name) ?? []
+    results.push(result)
+    byName.set(result.name, results)
+  }
+  return {
+    generatedAt: report.generatedAt,
+    entry: report.entry,
+    scenarios: report.scenarios,
+    repeat: report.repeat,
+    environment: report.environment,
+    results: Array.from(byName.values()).map(summarizeBaselineResult),
+  }
+}
+
 function buildPerformanceReport(results, budget, extra = {}) {
   return attachAnalysis({
     generatedAt: nowIso(),
@@ -1765,6 +1918,7 @@ async function main() {
       '--disable-renderer-backgrounding',
     ],
   })
+  const environment = await buildEnvironment(browser.version())
   const url = new URL('/scripts/.perf-app/index.html', baseUrl).toString()
   const results = []
   let runError = null
@@ -1802,8 +1956,8 @@ async function main() {
   }
 
   const report = buildPerformanceReport(results, budget, runError
-    ? { failedAt: nowIso(), error: serializeError(runError) }
-    : {})
+    ? { environment, failedAt: nowIso(), error: serializeError(runError) }
+    : { environment })
   await writePerformanceReport(report)
   printSummary(results)
   console.log(`Performance report written to ${path.relative(root, reportPath)}`)
@@ -1813,7 +1967,7 @@ async function main() {
     throw runError
 
   if (updateBaseline) {
-    await writeFile(baselinePath, `${JSON.stringify(report, null, 2)}\n`)
+    await writeFile(baselinePath, `${JSON.stringify(buildBaselineReport(report), null, 2)}\n`)
     console.log(`Baseline updated at ${path.relative(root, baselinePath)}`)
     return
   }

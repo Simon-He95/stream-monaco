@@ -29,8 +29,8 @@
       "recalcStyleCount": 160
     },
     "editor-update-highlight": {
-      "sampleP95Ms": 120,
-      "sampleMaxMs": 220,
+      "sampleP95Ms": 80,
+      "sampleMaxMs": 160,
       "longTaskCount": 5,
       "maxLongTaskMs": 150,
       "mainThreadBusyRatio": 0.9,
@@ -53,7 +53,7 @@
       "longTaskCount": 10,
       "maxLongTaskMs": 300,
       "mainThreadBusyRatio": 0.75,
-      "activeBusyRatio": 1.1,
+      "activeBusyRatio": 0.9,
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
       "paintPerOperation": 3
@@ -63,7 +63,7 @@
       "longTaskCount": 10,
       "maxLongTaskMs": 300,
       "mainThreadBusyRatio": 0.75,
-      "activeBusyRatio": 1.1,
+      "activeBusyRatio": 0.9,
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
       "paintPerOperation": 3
@@ -96,8 +96,8 @@
       "recalcStyleCount": 300
     },
     "diff-update-highlight": {
-      "sampleP95Ms": 140,
-      "sampleMaxMs": 280,
+      "sampleP95Ms": 120,
+      "sampleMaxMs": 240,
       "longTaskCount": 6,
       "maxLongTaskMs": 180,
       "mainThreadBusyRatio": 0.9,
@@ -120,7 +120,7 @@
       "longTaskCount": 14,
       "maxLongTaskMs": 350,
       "mainThreadBusyRatio": 0.82,
-      "activeBusyRatio": 1.1,
+      "activeBusyRatio": 0.9,
       "layoutPerOperation": 2.5,
       "recalcStylePerOperation": 5,
       "paintPerOperation": 5
@@ -130,7 +130,7 @@
       "longTaskCount": 14,
       "maxLongTaskMs": 350,
       "mainThreadBusyRatio": 0.82,
-      "activeBusyRatio": 1.1,
+      "activeBusyRatio": 0.9,
       "layoutPerOperation": 2.5,
       "recalcStylePerOperation": 5,
       "paintPerOperation": 5

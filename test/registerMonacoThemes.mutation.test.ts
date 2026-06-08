@@ -104,6 +104,7 @@ describe('registerMonacoThemes', () => {
     })
 
     const events: any[] = []
+    ;(globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__ = true
     ;(globalThis as any).__STREAM_MONACO_PERF__ = {
       recordTokenize: (event: any) => events.push(event),
     }
@@ -130,6 +131,7 @@ describe('registerMonacoThemes', () => {
     }
     finally {
       delete (globalThis as any).__STREAM_MONACO_PERF__
+      delete (globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__
     }
   })
 
@@ -147,6 +149,7 @@ describe('registerMonacoThemes', () => {
     })
 
     const events: any[] = []
+    ;(globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__ = true
     ;(globalThis as any).__STREAM_MONACO_PERF__ = {
       recordThemeRegistration: (event: any) => events.push(event),
     }
@@ -168,6 +171,7 @@ describe('registerMonacoThemes', () => {
     }
     finally {
       delete (globalThis as any).__STREAM_MONACO_PERF__
+      delete (globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__
     }
   })
 
@@ -197,6 +201,7 @@ describe('registerMonacoThemes', () => {
     })
 
     const events: any[] = []
+    ;(globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__ = true
     ;(globalThis as any).__STREAM_MONACO_PERF__ = {
       recordGrammarTokenize: (event: any) => events.push(event),
     }
@@ -217,6 +222,7 @@ describe('registerMonacoThemes', () => {
     }
     finally {
       delete (globalThis as any).__STREAM_MONACO_PERF__
+      delete (globalThis as any).__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__
     }
   })
 })

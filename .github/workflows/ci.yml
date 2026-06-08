@@ -126,3 +126,5 @@ jobs:
         with:
           name: stream-monaco-performance-report
           path: .perf/*
+          if-no-files-found: ignore
+          retention-days: 14

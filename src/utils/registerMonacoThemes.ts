@@ -7,6 +7,7 @@ import { arraysEqual } from './arraysEqual'
 const LEGACY_ONIG_INIT_KEY = '__streamMonacoLegacyOnigurumaInit__'
 const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'
 const LEGACY_MONACO_LANGS_INIT_KEY = '__streamMonacoLegacyMonacoLangsInit__'
+const PERF_HOOKS_ENABLED_KEY = '__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__'
 
 async function awaitLegacyOnigurumaInitIfPresent() {
   try {
@@ -94,34 +95,37 @@ function nowMs() {
     : Date.now()
 }
 
-function getTokenizationPerfHook() {
+function isPerfHooksEnabled() {
   try {
-    const hook = (globalThis as any).__STREAM_MONACO_PERF__?.recordTokenize
+    return (globalThis as any)?.[PERF_HOOKS_ENABLED_KEY] === true
+  }
+  catch {
+    return false
+  }
+}
+
+function getPerfHook(name: 'recordTokenize' | 'recordGrammarTokenize' | 'recordThemeRegistration') {
+  if (!isPerfHooksEnabled())
+    return null
+  try {
+    const hook = (globalThis as any).__STREAM_MONACO_PERF__?.[name]
     return typeof hook === 'function' ? hook : null
   }
   catch {
     return null
   }
+}
+
+function getTokenizationPerfHook() {
+  return getPerfHook('recordTokenize')
 }
 
 function getGrammarTokenizationPerfHook() {
-  try {
-    const hook = (globalThis as any).__STREAM_MONACO_PERF__?.recordGrammarTokenize
-    return typeof hook === 'function' ? hook : null
-  }
-  catch {
-    return null
-  }
+  return getPerfHook('recordGrammarTokenize')
 }
 
 function getThemeRegistrationPerfHook() {
-  try {
-    const hook = (globalThis as any).__STREAM_MONACO_PERF__?.recordThemeRegistration
-    return typeof hook === 'function' ? hook : null
-  }
-  catch {
-    return null
-  }
+  return getPerfHook('recordThemeRegistration')
 }
 
 function recordTokenize(
