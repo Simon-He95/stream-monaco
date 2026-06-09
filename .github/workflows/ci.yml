@@ -87,6 +87,8 @@ jobs:
     runs-on: ubuntu-22.04
     needs: test
     timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.38.0-jammy
 
     steps:
       - uses: actions/checkout@v4
@@ -104,9 +106,6 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Diff smoke
         run: pnpm smoke:diff
@@ -118,6 +117,8 @@ jobs:
     runs-on: ubuntu-22.04
     needs: test
     timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.38.0-jammy
 
     steps:
       - uses: actions/checkout@v4
@@ -135,9 +136,6 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Performance gate
         run: pnpm perf:gate
