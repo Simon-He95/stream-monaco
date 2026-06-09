@@ -22,7 +22,10 @@ const getArg = (name, fallback) => {
 const reportPath = path.resolve(root, getArg('--report', defaultReportPath))
 const budgetPath = path.resolve(root, getArg('--budget', defaultBudgetPath))
 const outputPath = path.resolve(root, getArg('--output', defaultOutputPath))
-const jsonOutputPath = outputPath.replace(/\.md$/i, '.json')
+const outputExt = path.extname(outputPath)
+const jsonOutputPath = outputExt
+  ? outputPath.slice(0, -outputExt.length) + '.json'
+  : `${outputPath}.json`
 
 function round(n, digits = 2) {
   if (!Number.isFinite(n))
@@ -35,8 +38,10 @@ async function readJson(file, fallback = null) {
   try {
     return JSON.parse(await readFile(file, 'utf8'))
   }
-  catch {
-    return fallback
+  catch (err) {
+    if (err?.code === 'ENOENT')
+      return fallback
+    throw err
   }
 }
 

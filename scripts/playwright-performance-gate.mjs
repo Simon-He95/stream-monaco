@@ -9,7 +9,6 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
-import { createServer } from 'vite'
 
 const nodeMajor = Number(process.versions.node.split('.')[0])
 const nodeMinor = Number(process.versions.node.split('.')[1] || '0')
@@ -17,6 +16,8 @@ const nodeMinor = Number(process.versions.node.split('.')[1] || '0')
 const nodeVersionOk = (nodeMajor === 20 && nodeMinor >= 19) || (nodeMajor === 22 && nodeMinor >= 12) || nodeMajor > 22
 if (!nodeVersionOk)
   throw new Error(`perf gate requires Node >=20.19.0 or >=22.12.0 for Vite 7, current ${process.version}`)
+
+const { createServer } = await import('vite')
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
