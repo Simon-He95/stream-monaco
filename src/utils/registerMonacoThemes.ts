@@ -204,6 +204,13 @@ function recordThemeRegistration(
   catch {}
 }
 
+function getProxyMember(target: any, prop: string | symbol) {
+  const value = Reflect.get(target, prop, target)
+  // Keep Shiki/TextMate methods bound to their real object. Calling methods with
+  // `this` set to a Proxy can break implementations that depend on private state.
+  return typeof value === 'function' ? value.bind(target) : value
+}
+
 function themeKey(t: ThemeInput | string | SpecialTheme) {
   return typeof t === 'string' ? t : (t as any).name ?? JSON.stringify(t)
 }
@@ -214,17 +221,17 @@ function maybeInstrumentHighlighterGrammar(
   if (!getGrammarTokenizationPerfHook())
     return highlighter
   return new Proxy(highlighter as any, {
-    get(target, prop, receiver) {
+    get(target, prop, _receiver) {
       if (prop !== 'getLanguage')
-        return Reflect.get(target, prop, receiver)
+        return getProxyMember(target, prop)
       return (language: string) => {
         const grammar = target.getLanguage(language)
         if (!grammar || typeof grammar.tokenizeLine2 !== 'function')
           return grammar
         return new Proxy(grammar, {
-          get(grammarTarget, grammarProp, grammarReceiver) {
+          get(grammarTarget, grammarProp, _grammarReceiver) {
             if (grammarProp !== 'tokenizeLine2')
-              return Reflect.get(grammarTarget, grammarProp, grammarReceiver)
+              return getProxyMember(grammarTarget, grammarProp)
             const originalTokenizeLine2 = grammarTarget.tokenizeLine2.bind(grammarTarget)
             return (line: string, ruleStack: any, timeLimit: number) => {
               const startedAt = nowMs()

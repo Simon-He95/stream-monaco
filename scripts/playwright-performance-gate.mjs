@@ -67,8 +67,9 @@ if (skipBaseline && (updateBaseline || requireBaseline)) {
 
 // A committed baseline is required by default (run `pnpm perf:baseline` on main
 // and commit the generated file). Use `--skip-baseline` for bootstrap-only
-// hard-budget checks. Baseline comparison is still skipped when the environment
-// (platform/arch/browser) does not match the committed baseline.
+// hard-budget checks. With --require-baseline, an environment mismatch between
+// the committed baseline and the current runtime causes a hard failure rather
+// than a silent skip.
 if (skipBaseline)
   baselinePath = path.join(perfDir, '__stream-monaco-baseline-disabled__.json')
 
@@ -1852,15 +1853,28 @@ function checkHardBudgets(results, budget) {
   return failures
 }
 
-function checkBaseline(results, baseline, tolerance, requireAllScenarios = false) {
+function checkBaseline(results, baseline, tolerance, environment, options = {}) {
   const failures = []
   if (!baseline?.results)
     return failures
+
+  const mismatches = getBaselineEnvironmentMismatches(baseline.environment, environment)
+  if (mismatches.length) {
+    const message = formatBaselineEnvironmentMismatch(mismatches)
+    if (options.requireBaseline) {
+      failures.push(message)
+    }
+    else {
+      console.warn(message)
+    }
+    return failures
+  }
+
   const baselineByName = new Map(baseline.results.map(r => [r.name, r]))
   for (const result of results) {
     const prev = baselineByName.get(result.name)
     if (!prev) {
-      if (requireAllScenarios)
+      if (options.requireAllScenarios)
         failures.push(`${result.name}: missing baseline entry`)
       continue
     }
@@ -1892,24 +1906,30 @@ function checkBaseline(results, baseline, tolerance, requireAllScenarios = false
   return failures
 }
 
-function formatEnvironmentValue(value) {
-  return value == null ? 'missing' : String(value)
+function getBaselineEnvironmentMismatches(baselineEnvironment, currentEnvironment) {
+  if (!baselineEnvironment || !currentEnvironment)
+    return ['missing baseline/current environment metadata']
+
+  const mismatches = []
+  for (const key of comparableBaselineEnvironmentKeys) {
+    const baselineValue = baselineEnvironment[key]
+    const currentValue = currentEnvironment[key]
+    if (baselineValue !== currentValue)
+      mismatches.push(`${key}: baseline=${JSON.stringify(baselineValue)} current=${JSON.stringify(currentValue)}`)
+  }
+  return mismatches
 }
 
-function getBaselineEnvironmentMismatches(currentEnvironment, baseline) {
-  if (!baseline?.results?.length)
-    return { hard: [], soft: [] }
-  if (!baseline.environment)
-    return { hard: ['environment: current=present baseline=missing'], soft: [] }
-  const hardKeys = ['platform', 'arch', 'nodeMajor', 'chromium']
-  const softKeys = ['playwright', 'lockfileHash', 'cpuModel']
-  const hard = hardKeys
-    .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
-    .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])}`)
-  const soft = softKeys
-    .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
-    .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])} (advisory only)`)
-  return { hard, soft }
+function formatBaselineEnvironmentMismatch(mismatches) {
+  return [
+    'performance baseline environment mismatch; baseline regression check was not comparable',
+    ...mismatches.map(item => `  - ${item}`),
+    'Regenerate scripts/performance-baseline.json in the same CI/runtime used by perf:gate, or run with --skip-baseline for hard-budget-only bootstrap checks.',
+  ].join('\n')
+}
+
+function formatEnvironmentValue(value) {
+  return value == null ? 'missing' : String(value)
 }
 
 function printSummary(results) {
@@ -2118,16 +2138,6 @@ async function main() {
     return
   }
 
-  const baselineEnvironmentMismatches = getBaselineEnvironmentMismatches(environment, baseline)
-  const baselineEnvironmentFailures = requireBaseline && baselineEnvironmentMismatches.hard.length
-    ? [`Performance baseline environment mismatch: ${baselineEnvironmentMismatches.hard.join(', ')}`]
-    : []
-  if (baselineEnvironmentMismatches.soft.length) {
-    console.warn('Baseline environment advisory differences (regression check is best-effort):')
-    for (const msg of baselineEnvironmentMismatches.soft)
-      console.warn(`  ${msg}`)
-  }
-  const canCompareBaseline = baseline?.results?.length && !baselineEnvironmentMismatches.hard.length
   const failures = [
     ...(requireBaseline && !baseline?.results?.length
       ? [
@@ -2135,9 +2145,8 @@ async function main() {
           'Run `pnpm perf:baseline` on a known-good commit and commit the generated file.',
         ]
       : []),
-    ...baselineEnvironmentFailures,
     ...checkHardBudgets(results, budget),
-    ...(canCompareBaseline ? checkBaseline(results, baseline, budget.tolerance ?? 0.25, requireBaseline) : []),
+    ...checkBaseline(results, baseline, budget.tolerance ?? 0.25, environment, { requireBaseline }),
   ]
   if (failures.length) {
     console.error('\nPerformance gate failed:')
