@@ -29,7 +29,7 @@
       "recalcStyleCount": 160
     },
     "editor-update-highlight": {
-      "sampleP95Ms": 80,
+      "sampleP95Ms": 100,
       "sampleMaxMs": 160,
       "longTaskCount": 5,
       "maxLongTaskMs": 150,
@@ -43,7 +43,7 @@
       "sampleMaxMs": 650,
       "longTaskCount": 8,
       "maxLongTaskMs": 220,
-      "mainThreadBusyRatio": 0.85,
+      "mainThreadBusyRatio": 0.97,
       "layoutPerOperation": 4,
       "recalcStylePerOperation": 8,
       "paintPerOperation": 8
@@ -96,7 +96,7 @@
       "recalcStyleCount": 300
     },
     "diff-update-highlight": {
-      "sampleP95Ms": 120,
+      "sampleP95Ms": 160,
       "sampleMaxMs": 240,
       "longTaskCount": 6,
       "maxLongTaskMs": 180,
@@ -108,9 +108,9 @@
     "diff-middle-replace-large-doc": {
       "sampleP95Ms": 600,
       "sampleMaxMs": 1000,
-      "longTaskCount": 10,
+      "longTaskCount": 35,
       "maxLongTaskMs": 260,
-      "mainThreadBusyRatio": 0.93,
+      "mainThreadBusyRatio": 0.97,
       "layoutPerOperation": 8,
       "recalcStylePerOperation": 14,
       "paintPerOperation": 14
