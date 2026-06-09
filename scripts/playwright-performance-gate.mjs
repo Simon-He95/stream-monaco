@@ -706,6 +706,79 @@ async function waitForHighlight(container: HTMLElement, marker?: string, timeout
   )
 }
 
+function getDiffLineChanges(api: ReturnType<typeof useMonaco>) {
+  const editor = api.getDiffEditorView()
+  if (!editor || typeof editor.getLineChanges !== 'function')
+    return []
+  const changes = editor.getLineChanges()
+  return Array.isArray(changes) ? changes : []
+}
+
+function diffChangesReachLine(
+  api: ReturnType<typeof useMonaco>,
+  minModifiedLine = 1,
+) {
+  const changes = getDiffLineChanges(api)
+  if (!changes.length)
+    return false
+  return changes.some((change: any) => {
+    const modifiedEnd = Math.max(
+      change.modifiedStartLineNumber || 0,
+      change.modifiedEndLineNumber || 0,
+    )
+    return modifiedEnd >= minModifiedLine
+  })
+}
+
+async function waitForDiffChanges(
+  api: ReturnType<typeof useMonaco>,
+  minModifiedLine = 1,
+  timeoutMs = 8000,
+  label = 'diff line changes',
+) {
+  return waitUntil(
+    () => diffChangesReachLine(api, minModifiedLine),
+    timeoutMs,
+    label,
+  )
+}
+
+function waitForNextDiffUpdate(
+  api: ReturnType<typeof useMonaco>,
+  timeoutMs = 8000,
+  label = 'diff update',
+) {
+  const editor = api.getDiffEditorView()
+  if (!editor || typeof editor.onDidUpdateDiff !== 'function')
+    return Promise.resolve(0)
+
+  const start = performance.now()
+  return new Promise<number>((resolve, reject) => {
+    let done = false
+    let disposable: { dispose: () => void } | null = null
+    const finish = (error?: Error) => {
+      if (done)
+        return
+      done = true
+      clearTimeout(timer)
+      try { disposable?.dispose() }
+      catch {}
+      if (error) {
+        reject(error)
+        return
+      }
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - start)))
+    }
+    const timer = setTimeout(
+      () => finish(new Error(
+        \`Timed out waiting for \${label} after \${timeoutMs}ms\`,
+      )),
+      timeoutMs,
+    )
+    disposable = editor.onDidUpdateDiff(() => finish())
+  })
+}
+
 const diffDecorationSelector = [
   '.line-insert',
   '.line-delete',
@@ -1091,6 +1164,7 @@ async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any =
   await api.createDiffEditor(container, original, modified, 'typescript')
   const createdAt = performance.now()
   await waitForHighlight(container, modifiedMarker)
+  await waitForDiffChanges(api, 1, 10000, 'initial diff line changes')
   const highlightedAt = performance.now()
   const duration = highlightedAt - start
   await twoFrames()
@@ -1135,7 +1209,7 @@ async function runDiffUpdateHighlight() {
     modified = modified.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
     const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
-    const diffUpdated = waitForDiffUpdate(api, container, previousVersion, modified.length, start)
+    const diffUpdated = waitForNextDiffUpdate(api, 8000, 'diff update highlight recompute')
     api.updateDiff(original, modified, 'typescript')
     const updateCalledAt = performance.now()
     await waitForModelUpdate(
@@ -1146,15 +1220,19 @@ async function runDiffUpdateHighlight() {
       'diff modified model update',
     )
     const modelReadyAt = performance.now()
+    const diffComputeMs = await diffUpdated
+    const diffComputeDoneAt = performance.now()
+    await waitForDiffChanges(api, 1, 5000, 'diff update line changes')
+    const diffChangesReadyAt = performance.now()
     await waitForHighlight(container, marker, 5000)
     const highlightedAt = performance.now()
-    const diffComputeMs = await diffUpdated
     const doneAt = performance.now()
     samples.push(doneAt - start)
     addPhaseSample(phaseSamples, 'updateCallMs', updateCalledAt - start)
     addPhaseSample(phaseSamples, 'modelReadyMs', modelReadyAt - updateCalledAt)
-    addPhaseSample(phaseSamples, 'highlightReadyMs', highlightedAt - modelReadyAt)
-    addPhaseSample(phaseSamples, 'diffSettledMs', doneAt - highlightedAt)
+    addPhaseSample(phaseSamples, 'diffComputeMs', diffComputeDoneAt - modelReadyAt)
+    addPhaseSample(phaseSamples, 'diffChangesMs', diffChangesReadyAt - diffComputeDoneAt)
+    addPhaseSample(phaseSamples, 'highlightReadyMs', highlightedAt - diffChangesReadyAt)
     addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
     diffComputeSamples.push(diffComputeMs)
   }
@@ -1249,10 +1327,9 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const operations = 500
   const perOperationSleepMs = 5
   const streamTexts = Array.from({ length: operations }, (_, i) => \`\\nconsole.log("SM_DIFF_BURST_\${i}", \${i})\`)
-  const finalModifiedLength = modified.length + streamTexts.reduce((sum, text) => sum + text.length, 0)
   const previousVersion = getModelVersion(api.getDiffModels().modified)
   const start = performance.now()
-  const diffUpdated = waitForDiffUpdate(api, container, previousVersion, finalModifiedLength, start, 15000)
+  const diffUpdated = waitForNextDiffUpdate(api, 15000, 'diff burst final recompute')
   const streamHighlightSamples: number[] = []
   for (let i = 0; i < operations; i++) {
     const text = streamTexts[i]
@@ -1273,6 +1350,9 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const emitLoopDoneAt = performance.now()
   await waitUntil(() => getModelValueLength(api.getDiffModels().modified) === modified.length, 12000, 'diff burst final model')
   const modelReadyAt = performance.now()
+  const finalLine = modified.split('\\n').length
+  await waitForDiffChanges(api, Math.max(1, finalLine - 5), 12000, 'diff burst final line changes')
+  const diffChangesReadyAt = performance.now()
   const finalMarker = \`SM_DIFF_BURST_\${operations - 1}\`
   await waitForHighlight(container, finalMarker, 8000)
   const highlightReadyAt = performance.now()
@@ -1293,7 +1373,8 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     phases: {
       emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
       finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
-      highlightWaitMs: Math.round((highlightReadyAt - modelReadyAt) * 100) / 100,
+      diffChangesWaitMs: Math.round((diffChangesReadyAt - modelReadyAt) * 100) / 100,
+      highlightWaitMs: Math.round((highlightReadyAt - diffChangesReadyAt) * 100) / 100,
       diffSettledMs: Math.round((diffSettledAt - highlightReadyAt) * 100) / 100,
       settleMs: Math.round((settledAt - diffSettledAt) * 100) / 100,
       totalMs: Math.round(wallMs * 100) / 100,
