@@ -40,6 +40,7 @@ const requireBaseline = has('--require-baseline')
 const headed = has('--headed')
 const scenarioFilter = getArg('--scenario', '')
 const repeat = Number(getArg('--repeat', '1'))
+const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'playwright', 'chromium']
 
 const SCENARIOS = [
   'editor-cold-first-highlight-default-options',
@@ -1779,6 +1780,20 @@ function checkBaseline(results, baseline, tolerance, requireAllScenarios = false
   return failures
 }
 
+function formatEnvironmentValue(value) {
+  return value == null ? 'missing' : String(value)
+}
+
+function getBaselineEnvironmentMismatches(currentEnvironment, baseline) {
+  if (!baseline?.results?.length)
+    return []
+  if (!baseline.environment)
+    return ['environment: current=present baseline=missing']
+  return comparableBaselineEnvironmentKeys
+    .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
+    .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])}`)
+}
+
 function printSummary(results) {
   const rows = results.map(r => ({
     scenario: r.name,
@@ -1972,6 +1987,11 @@ async function main() {
     return
   }
 
+  const baselineEnvironmentMismatches = getBaselineEnvironmentMismatches(environment, baseline)
+  const baselineEnvironmentFailures = requireBaseline && baselineEnvironmentMismatches.length
+    ? [`Performance baseline environment mismatch: ${baselineEnvironmentMismatches.join(', ')}`]
+    : []
+  const canCompareBaseline = baseline?.results?.length && !baselineEnvironmentMismatches.length
   const failures = [
     ...(requireBaseline && !baseline?.results?.length
       ? [
@@ -1979,8 +1999,9 @@ async function main() {
           'Run `pnpm perf:baseline` on a known-good commit and commit the generated file.',
         ]
       : []),
+    ...baselineEnvironmentFailures,
     ...checkHardBudgets(results, budget),
-    ...checkBaseline(results, baseline, budget.tolerance ?? 0.25, requireBaseline),
+    ...(canCompareBaseline ? checkBaseline(results, baseline, budget.tolerance ?? 0.25, requireBaseline) : []),
   ]
   if (failures.length) {
     console.error('\nPerformance gate failed:')

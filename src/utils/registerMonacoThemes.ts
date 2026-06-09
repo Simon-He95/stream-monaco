@@ -7,6 +7,7 @@ import { arraysEqual } from './arraysEqual'
 const LEGACY_ONIG_INIT_KEY = '__streamMonacoLegacyOnigurumaInit__'
 const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'
 const LEGACY_MONACO_LANGS_INIT_KEY = '__streamMonacoLegacyMonacoLangsInit__'
+// Private benchmark hooks; not a public API.
 const PERF_HOOKS_ENABLED_KEY = '__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__'
 
 async function awaitLegacyOnigurumaInitIfPresent() {

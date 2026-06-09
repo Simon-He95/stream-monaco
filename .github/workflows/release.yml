@@ -11,7 +11,7 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,11 +27,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
 
-      - run: pnpm vitest run
-
-      - run: pnpm typecheck
+      - run: pnpm release:verify
 
       - run: pnpm dlx changelogithub
         env:
