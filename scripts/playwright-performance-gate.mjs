@@ -2190,7 +2190,8 @@ async function main() {
         const page = await context.newPage()
         const client = await context.newCDPSession(page)
         try {
-          await page.goto(url, { waitUntil: 'networkidle' })
+          await page.goto(url, { waitUntil: 'domcontentloaded' })
+          await page.waitForFunction(() => typeof window.__SM_PERF__?.runScenario === 'function')
           const result = await runScenario(page, client, scenario)
           result.scenario = scenario
           if (repeat > 1) {
