@@ -704,17 +704,22 @@ async function waitForDiffUpdate(
 }
 
 function observeLongTasks() {
+  const start = performance.now()
   const entries: any[] = []
   let observer: PerformanceObserver | null = null
   try {
     observer = new PerformanceObserver((list) => {
-      entries.push(...list.getEntries().map(e => ({
-        name: e.name,
-        startTime: e.startTime,
-        duration: e.duration,
-      })))
+      entries.push(
+        ...list.getEntries()
+          .filter(e => e.startTime >= start)
+          .map(e => ({
+            name: e.name,
+            startTime: e.startTime,
+            duration: e.duration,
+          })),
+      )
     })
-    observer.observe({ type: 'longtask' as any, buffered: true })
+    observer.observe({ type: 'longtask' as any })
   }
   catch {}
   return {
@@ -800,6 +805,7 @@ async function runEditorFirstHighlight(cold: boolean, defaultOptions = false) {
   const lineCount = model?.getLineCount?.() ?? code.split('\\n').length
   const tokenDom = getTokenDomSummary(container)
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: 1,
@@ -825,7 +831,7 @@ async function runEditorFirstHighlight(cold: boolean, defaultOptions = false) {
     },
     chars: code.length,
     lines: lineCount,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -885,13 +891,14 @@ async function runEditorUpdateHighlight() {
     addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: samples.length,
     samples,
     sampleSummary: summarizeNumbers(samples),
     phaseSummary: summarizePhaseSamples(phaseSamples),
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -938,6 +945,7 @@ async function runEditorMiddleReplaceLargeDoc() {
     addPhaseSample(phaseSamples, 'totalMs', doneAt - start)
   }
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: samples.length,
@@ -946,7 +954,7 @@ async function runEditorMiddleReplaceLargeDoc() {
     phaseSummary: summarizePhaseSamples(phaseSamples),
     chars: code.length,
     lines: lines.length,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -989,6 +997,7 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
   await sleep(settleMs)
   const settledAt = performance.now()
   const wallMs = settledAt - start
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     mode,
@@ -1007,7 +1016,7 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
     sampleSummary: summarizeNumbers([wallMs]),
     streamUpdateHighlightSummary: summarizeNumbers(streamHighlightSamples),
     finalChars: code.length,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -1038,6 +1047,7 @@ async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any =
   const highlightedAt = performance.now()
   const duration = highlightedAt - start
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: 1,
@@ -1050,7 +1060,7 @@ async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any =
     },
     options: defaultOptions ? 'default' : extraOptions,
     chars: original.length + modified.length,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -1102,6 +1112,7 @@ async function runDiffUpdateHighlight() {
     diffComputeSamples.push(diffComputeMs)
   }
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: samples.length,
@@ -1109,7 +1120,7 @@ async function runDiffUpdateHighlight() {
     sampleSummary: summarizeNumbers(samples),
     phaseSummary: summarizePhaseSamples(phaseSamples),
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -1165,6 +1176,7 @@ async function runDiffMiddleReplaceLargeDoc() {
     diffComputeSamples.push(diffComputeMs)
   }
   await twoFrames()
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     operations: samples.length,
@@ -1174,7 +1186,7 @@ async function runDiffMiddleReplaceLargeDoc() {
     diffComputeSummary: summarizeNumbers(diffComputeSamples),
     chars: original.length + modified.length,
     lines: modifiedLines.length,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -1214,12 +1226,16 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const emitLoopDoneAt = performance.now()
   await waitUntil(() => getModelValueLength(api.getDiffModels().modified) === modified.length, 12000, 'diff burst final model')
   const modelReadyAt = performance.now()
+  const finalMarker = \`SM_DIFF_BURST_\${operations - 1}\`
+  await waitForHighlight(container, finalMarker, 8000)
+  const highlightReadyAt = performance.now()
   const diffComputeMs = await diffUpdated
   const diffSettledAt = performance.now()
   const settleMs = 300
   await sleep(settleMs)
   const settledAt = performance.now()
   const wallMs = settledAt - start
+  const longTaskSummary = summarizeLongTasks(longTasks.stop())
   cleanupPerfEditor(api)
   return {
     mode,
@@ -1230,7 +1246,8 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     phases: {
       emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
       finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
-      diffSettledMs: Math.round((diffSettledAt - modelReadyAt) * 100) / 100,
+      highlightWaitMs: Math.round((highlightReadyAt - modelReadyAt) * 100) / 100,
+      diffSettledMs: Math.round((diffSettledAt - highlightReadyAt) * 100) / 100,
       settleMs: Math.round((settledAt - diffSettledAt) * 100) / 100,
       totalMs: Math.round(wallMs * 100) / 100,
     },
@@ -1364,8 +1381,8 @@ async function runScenario(page, client, name) {
   const taskDurationMs = round((delta.TaskDuration || 0) * 1000)
   const intentionalSleepMs = result.intentionalSleepMs || 0
   const activeExcludedMs = result.activeExcludedMs || 0
-  const activeWallMs = activeExcludedMs > 0
-    ? Math.max(1, wallMs - activeExcludedMs)
+  const activeWallMs = intentionalSleepMs > 0
+    ? Math.max(1, wallMs - intentionalSleepMs)
     : 0
   const cdp = {
     wallMs,
@@ -2013,8 +2030,11 @@ async function main() {
         try {
           await page.goto(url, { waitUntil: 'networkidle' })
           const result = await runScenario(page, client, scenario)
-          if (repeat > 1)
+          if (repeat > 1) {
+            result.name = `${scenario}#${i + 1}`
+            result.scenario = scenario
             result.repeatIndex = i + 1
+          }
           results.push(result)
         }
         finally {

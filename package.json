@@ -80,7 +80,7 @@
     "format": "prettier --write --cache .",
     "lint": "eslint . --cache",
     "lint:fix": "pnpm run lint --fix",
-    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test",
+    "prepublishOnly": "pnpm release:verify",
     "release": "bumpp --tag \"v%s\"",
     "publish:package": "pnpm release:verify && npm publish",
     "start": "esno src/index.ts",
