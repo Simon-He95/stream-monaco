@@ -98,7 +98,8 @@ function nowMs() {
 
 function isPerfHooksEnabled() {
   try {
-    return (globalThis as any)?.[PERF_HOOKS_ENABLED_KEY] === true
+    return typeof globalThis !== 'undefined'
+      && (globalThis as any)?.[PERF_HOOKS_ENABLED_KEY] === true
   }
   catch {
     return false
@@ -109,6 +110,8 @@ function getPerfHook(name: 'recordTokenize' | 'recordGrammarTokenize' | 'recordT
   if (!isPerfHooksEnabled())
     return null
   try {
+    if (typeof globalThis === 'undefined')
+      return null
     const hook = (globalThis as any).__STREAM_MONACO_PERF__?.[name]
     return typeof hook === 'function' ? hook : null
   }

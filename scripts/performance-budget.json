@@ -1,5 +1,15 @@
 {
   "tolerance": 0.25,
+  "warningBudget": {
+    "mainThreadBusyRatio": 0.75,
+    "maxLongTaskMs": 200,
+    "longTaskCount": 12
+  },
+  "failBudget": {
+    "mainThreadBusyRatio": 0.9,
+    "maxLongTaskMs": 250,
+    "longTaskCount": 20
+  },
   "scenarioBudgets": {
     "editor-cold-first-highlight-default-options": {
       "sampleP95Ms": 3000,
@@ -15,7 +25,7 @@
       "sampleMaxMs": 3500,
       "longTaskCount": 8,
       "maxLongTaskMs": 300,
-      "mainThreadBusyRatio": 0.95,
+      "mainThreadBusyRatio": 0.9,
       "layoutCount": 120,
       "recalcStyleCount": 220
     },
@@ -24,7 +34,7 @@
       "sampleMaxMs": 900,
       "longTaskCount": 4,
       "maxLongTaskMs": 180,
-      "mainThreadBusyRatio": 0.95,
+      "mainThreadBusyRatio": 0.9,
       "layoutCount": 80,
       "recalcStyleCount": 160
     },
@@ -43,7 +53,7 @@
       "sampleMaxMs": 650,
       "longTaskCount": 8,
       "maxLongTaskMs": 220,
-      "mainThreadBusyRatio": 0.97,
+      "mainThreadBusyRatio": 0.9,
       "layoutPerOperation": 4,
       "recalcStylePerOperation": 8,
       "paintPerOperation": 8
@@ -56,7 +66,9 @@
       "activeBusyRatio": 0.9,
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
-      "paintPerOperation": 3
+      "paintPerOperation": 3,
+      "streamUpdateHighlightP95Ms": 120,
+      "streamUpdateHighlightMaxMs": 240
     },
     "editor-stream-append-burst": {
       "wallMs": 5000,
@@ -66,14 +78,16 @@
       "activeBusyRatio": 0.9,
       "layoutPerOperation": 1.5,
       "recalcStylePerOperation": 3,
-      "paintPerOperation": 3
+      "paintPerOperation": 3,
+      "streamUpdateHighlightP95Ms": 120,
+      "streamUpdateHighlightMaxMs": 240
     },
     "diff-cold-first-highlight-default-options": {
       "sampleP95Ms": 4200,
       "sampleMaxMs": 5800,
       "longTaskCount": 14,
       "maxLongTaskMs": 450,
-      "mainThreadBusyRatio": 0.95,
+      "mainThreadBusyRatio": 0.9,
       "layoutCount": 220,
       "recalcStyleCount": 360
     },
@@ -82,7 +96,7 @@
       "sampleMaxMs": 5000,
       "longTaskCount": 12,
       "maxLongTaskMs": 400,
-      "mainThreadBusyRatio": 0.93,
+      "mainThreadBusyRatio": 0.9,
       "layoutCount": 180,
       "recalcStyleCount": 300
     },
@@ -91,7 +105,7 @@
       "sampleMaxMs": 5000,
       "longTaskCount": 12,
       "maxLongTaskMs": 400,
-      "mainThreadBusyRatio": 0.93,
+      "mainThreadBusyRatio": 0.9,
       "layoutCount": 180,
       "recalcStyleCount": 300
     },
@@ -108,9 +122,9 @@
     "diff-middle-replace-large-doc": {
       "sampleP95Ms": 600,
       "sampleMaxMs": 1000,
-      "longTaskCount": 35,
+      "longTaskCount": 18,
       "maxLongTaskMs": 260,
-      "mainThreadBusyRatio": 0.97,
+      "mainThreadBusyRatio": 0.9,
       "layoutPerOperation": 8,
       "recalcStylePerOperation": 14,
       "paintPerOperation": 14
@@ -123,7 +137,9 @@
       "activeBusyRatio": 0.9,
       "layoutPerOperation": 2.5,
       "recalcStylePerOperation": 5,
-      "paintPerOperation": 5
+      "paintPerOperation": 5,
+      "streamUpdateHighlightP95Ms": 120,
+      "streamUpdateHighlightMaxMs": 240
     },
     "diff-stream-append-burst": {
       "wallMs": 6500,
@@ -133,7 +149,9 @@
       "activeBusyRatio": 0.9,
       "layoutPerOperation": 2.5,
       "recalcStylePerOperation": 5,
-      "paintPerOperation": 5
+      "paintPerOperation": 5,
+      "streamUpdateHighlightP95Ms": 120,
+      "streamUpdateHighlightMaxMs": 240
     }
   }
 }

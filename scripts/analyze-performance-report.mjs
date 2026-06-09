@@ -51,6 +51,8 @@ function ratio(actual, limit) {
 }
 
 function metricScore(value, budgetValue) {
+  if (value == null || budgetValue == null || !Number.isFinite(value) || !Number.isFinite(budgetValue) || budgetValue <= 0)
+    return 'no-budget'
   const r = ratio(value, budgetValue)
   if (r >= 1.2)
     return 'critical'
@@ -206,9 +208,11 @@ function recommendationsFor(result, metrics, budget) {
 
 function analyzeScenario(result, budget) {
   const metrics = getHotMetrics(result)
+  const globalWarn = budget?.warningBudget || {}
+  const globalFail = budget?.failBudget || {}
   const busyBudget = typeof result.cdp?.activeBusyRatio === 'number'
-    ? budget.activeBusyRatio
-    : budget.mainThreadBusyRatio
+    ? (budget.activeBusyRatio ?? globalFail.activeBusyRatio ?? globalFail.mainThreadBusyRatio)
+    : (budget.mainThreadBusyRatio ?? globalFail.mainThreadBusyRatio)
   const statuses = [
     metricScore(metrics.p95Ms, budget.sampleP95Ms),
     metricScore(metrics.maxMs, budget.sampleMaxMs),
@@ -220,6 +224,15 @@ function analyzeScenario(result, budget) {
     metricScore(metrics.stylePerOp, budget.recalcStylePerOperation),
     metricScore(metrics.paintPerOp, budget.paintPerOperation),
   ]
+  // Add streaming highlight latency checks if data present
+  const streamHighlightP95 = result.streamUpdateHighlightSummary?.p95
+  const streamHighlightMax = result.streamUpdateHighlightSummary?.max
+  if (streamHighlightP95 != null || streamHighlightMax != null) {
+    statuses.push(
+      metricScore(streamHighlightP95, budget.streamUpdateHighlightP95Ms),
+      metricScore(streamHighlightMax, budget.streamUpdateHighlightMaxMs),
+    )
+  }
   const bottleneck = detectDominantBottleneck(result, metrics)
   return {
     scenario: result.name,

@@ -17,7 +17,7 @@
     "diff-stream-full-update-burst",
     "diff-stream-append-burst"
   ],
-  "repeat": 1,
+  "repeat": 3,
   "environment": {
     "platform": "linux",
     "arch": "x64",

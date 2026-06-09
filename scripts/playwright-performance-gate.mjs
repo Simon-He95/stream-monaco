@@ -12,8 +12,11 @@ import { chromium } from 'playwright'
 import { createServer } from 'vite'
 
 const nodeMajor = Number(process.versions.node.split('.')[0])
-if (nodeMajor < 20)
-  throw new Error(`perf gate requires Node >=20, current ${process.version}`)
+const nodeMinor = Number(process.versions.node.split('.')[1] || '0')
+// Vite 7 requires Node >=20.19.0 || >=22.12.0
+const nodeVersionOk = (nodeMajor === 20 && nodeMinor >= 19) || (nodeMajor === 22 && nodeMinor >= 12) || nodeMajor > 22
+if (!nodeVersionOk)
+  throw new Error(`perf gate requires Node >=20.19.0 or >=22.12.0 for Vite 7, current ${process.version}`)
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -40,7 +43,7 @@ const requireBaseline = has('--require-baseline')
 const headed = has('--headed')
 const scenarioFilter = getArg('--scenario', '')
 const repeat = Number(getArg('--repeat', '1'))
-const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'playwright', 'chromium']
+const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'node', 'playwright', 'chromium', 'lockfileHash']
 
 const SCENARIOS = [
   'editor-cold-first-highlight-default-options',
@@ -959,14 +962,22 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
   const operations = 500
   const perOperationSleepMs = 5
   let finalMarker = 'SM_BURST_BASE'
+  const streamHighlightSamples: number[] = []
   for (let i = 0; i < operations; i++) {
     finalMarker = \`SM_BURST_\${i}\`
     const text = \`console.log("\${finalMarker}", \${i})\\n\`
     code += text
+    const updateStart = performance.now()
     if (mode === 'append')
       api.appendCode(text, 'typescript')
     else
       api.updateCode(code, 'typescript')
+    // Sample per-update highlight latency every 20th update
+    if (i % 20 === 0 && i > 0) {
+      const marker = \`SM_BURST_\${i}\`
+      await waitForHighlight(container, marker, 4000)
+      streamHighlightSamples.push(performance.now() - updateStart)
+    }
     await sleep(perOperationSleepMs)
   }
   const emitLoopDoneAt = performance.now()
@@ -994,6 +1005,7 @@ async function runEditorStreamBurst(mode: 'full-update' | 'append') {
     },
     samples: [wallMs],
     sampleSummary: summarizeNumbers([wallMs]),
+    streamUpdateHighlightSummary: summarizeNumbers(streamHighlightSamples),
     finalChars: code.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
@@ -1182,13 +1194,21 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const previousVersion = getModelVersion(api.getDiffModels().modified)
   const start = performance.now()
   const diffUpdated = waitForDiffUpdate(api, container, previousVersion, finalModifiedLength, start, 15000)
+  const streamHighlightSamples: number[] = []
   for (let i = 0; i < operations; i++) {
     const text = streamTexts[i]
     modified += text
+    const updateStart = performance.now()
     if (mode === 'append')
       api.appendModified(text, 'typescript')
     else
       api.updateDiff(original, modified, 'typescript')
+    // Sample per-update highlight latency every 20th update
+    if (i % 20 === 0 && i > 0) {
+      const marker = \`SM_DIFF_BURST_\${i}\`
+      await waitForHighlight(container, marker, 4000)
+      streamHighlightSamples.push(performance.now() - updateStart)
+    }
     await sleep(perOperationSleepMs)
   }
   const emitLoopDoneAt = performance.now()
@@ -1217,6 +1237,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     samples: [wallMs],
     sampleSummary: summarizeNumbers([wallMs]),
     diffComputeSummary: summarizeNumbers([diffComputeMs]),
+    streamUpdateHighlightSummary: summarizeNumbers(streamHighlightSamples),
     finalChars: modified.length,
     longTasks: summarizeLongTasks(longTasks.stop()),
   }
@@ -1383,7 +1404,7 @@ function stylePerOperation(result) {
   )
 }
 
-function classifyScenario(result, budgetForScenario = {}) {
+function classifyScenario(result, budgetForScenario = {}, globalBudget = {}) {
   const issues = []
   const p95 = result.sampleSummary?.p95 ?? 0
   const max = result.sampleSummary?.max ?? 0
@@ -1400,6 +1421,12 @@ function classifyScenario(result, budgetForScenario = {}) {
   const maxLongTaskMs = result.longTasks?.maxMs ?? 0
   const diffComputeP95 = result.diffComputeSummary?.p95 ?? 0
   const tokenizationMs = result.tokenization?.totalMs ?? 0
+  const streamHighlightP95 = result.streamUpdateHighlightSummary?.p95 ?? 0
+  const streamHighlightMax = result.streamUpdateHighlightSummary?.max ?? 0
+
+  // Merge global warning/fail budgets with scenario-specific overrides.
+  const failBudget = { ...(globalBudget.failBudget || {}), ...budgetForScenario }
+  const warningBudget = { ...(globalBudget.warningBudget || {}), ...budgetForScenario }
 
   const addIssue = (condition, issue) => {
     if (condition)
@@ -1411,64 +1438,84 @@ function classifyScenario(result, budgetForScenario = {}) {
   else if (scriptMs > taskMs * 0.6)
     cpuCause = 'script/tokenization/model-edit dominated'
 
-  addIssue(p95 > (budgetForScenario.sampleP95Ms ?? Infinity), {
-    severity: p95 > (budgetForScenario.sampleP95Ms ?? Infinity) * 1.5 ? 'high' : 'medium',
+  addIssue(p95 > (failBudget.sampleP95Ms ?? Infinity), {
+    severity: p95 > (failBudget.sampleP95Ms ?? Infinity) * 1.5 ? 'high' : 'medium',
     type: 'latency',
-    message: `p95 ${round(p95)}ms exceeds budget ${budgetForScenario.sampleP95Ms}ms`,
+    message: `p95 ${round(p95)}ms exceeds budget ${failBudget.sampleP95Ms}ms`,
   })
-  addIssue(max > (budgetForScenario.sampleMaxMs ?? Infinity), {
+  addIssue(max > (failBudget.sampleMaxMs ?? Infinity), {
     severity: 'medium',
     type: 'latency',
-    message: `max ${round(max)}ms exceeds budget ${budgetForScenario.sampleMaxMs}ms`,
+    message: `max ${round(max)}ms exceeds budget ${failBudget.sampleMaxMs}ms`,
   })
-  addIssue(wallMs > (budgetForScenario.wallMs ?? Infinity), {
+  addIssue(wallMs > (failBudget.wallMs ?? Infinity), {
     severity: 'high',
     type: 'wall-time',
-    message: `wallMs ${round(wallMs)}ms exceeds budget ${budgetForScenario.wallMs}ms`,
+    message: `wallMs ${round(wallMs)}ms exceeds budget ${failBudget.wallMs}ms`,
   })
-  addIssue(longTasks > (budgetForScenario.longTaskCount ?? Infinity), {
+  addIssue(longTasks > (failBudget.longTaskCount ?? Infinity), {
     severity: 'high',
     type: 'long-task',
     message: `${longTasks} long tasks, max ${round(maxLongTaskMs)}ms`,
     cause: 'main-thread work is not chunked enough or diff/tokenization/layout is blocking',
   })
-  addIssue(maxLongTaskMs > (budgetForScenario.maxLongTaskMs ?? Infinity), {
+  addIssue(maxLongTaskMs > (failBudget.maxLongTaskMs ?? Infinity), {
     severity: 'high',
     type: 'long-task',
-    message: `max long task ${round(maxLongTaskMs)}ms exceeds budget ${budgetForScenario.maxLongTaskMs}ms`,
+    message: `max long task ${round(maxLongTaskMs)}ms exceeds budget ${failBudget.maxLongTaskMs}ms`,
     cause: 'a single update flush is doing too much work before yielding',
   })
-  addIssue(busy > (budgetForScenario.activeBusyRatio ?? budgetForScenario.mainThreadBusyRatio ?? Infinity), {
+  const failBusyBudget = failBudget.activeBusyRatio ?? failBudget.mainThreadBusyRatio
+  const warnBusyBudget = warningBudget.activeBusyRatio ?? warningBudget.mainThreadBusyRatio
+  addIssue(typeof failBusyBudget === 'number' && busy > failBusyBudget, {
     severity: 'high',
     type: 'cpu',
-    message: `busyRatio=${busy}`,
+    message: `busyRatio=${busy} > fail budget ${failBusyBudget}`,
     cause: cpuCause,
   })
-  addIssue(layoutCount > (budgetForScenario.layoutCount ?? Infinity), {
+  addIssue(typeof warnBusyBudget === 'number' && busy > warnBusyBudget && busy <= (failBusyBudget ?? Infinity), {
+    severity: 'medium',
+    type: 'cpu',
+    message: `busyRatio=${busy} exceeds warning ${warnBusyBudget} (fail=${failBusyBudget})`,
+    cause: cpuCause,
+  })
+  addIssue(streamHighlightP95 > (failBudget.streamUpdateHighlightP95Ms ?? Infinity), {
+    severity: 'high',
+    type: 'stream-highlight-latency',
+    message: `stream per-update highlight p95 ${round(streamHighlightP95)}ms exceeds budget ${failBudget.streamUpdateHighlightP95Ms}ms`,
+    cause: 'per-append tokenization/layout is not yielding enough between streaming updates',
+  })
+  addIssue(streamHighlightMax > (failBudget.streamUpdateHighlightMaxMs ?? Infinity), {
+    severity: 'high',
+    type: 'stream-highlight-latency',
+    message: `stream per-update highlight max ${round(streamHighlightMax)}ms exceeds budget ${failBudget.streamUpdateHighlightMaxMs}ms`,
+    cause: 'worst-case append is blocking rendering too long',
+  })
+  addIssue(layoutCount > (failBudget.layoutCount ?? Infinity), {
     severity: 'medium',
     type: 'layout',
     message: `LayoutCount=${layoutCount}`,
     cause: 'height sync, scroll/reveal, or DOM measurement is happening too often',
   })
-  addIssue(recalcStyleCount > (budgetForScenario.recalcStyleCount ?? Infinity), {
+  addIssue(recalcStyleCount > (failBudget.recalcStyleCount ?? Infinity), {
     severity: 'medium',
     type: 'style',
     message: `RecalcStyleCount=${recalcStyleCount}`,
     cause: 'class/style changes or Monaco/diff DOM mutations are causing style recalculation',
   })
-  addIssue(layoutPerOp > (budgetForScenario.layoutPerOperation ?? Infinity), {
+  addIssue(layoutPerOp > (failBudget.layoutPerOperation ?? Infinity), {
     severity: 'high',
     type: 'layout',
     message: `Layout.perOperation=${layoutPerOp}`,
     cause: 'height sync, scroll/reveal, or DOM measurement is happening too often',
   })
-  addIssue(stylePerOp > (budgetForScenario.recalcStylePerOperation ?? Infinity), {
+  addIssue(stylePerOp > (failBudget.recalcStylePerOperation ?? Infinity), {
     severity: 'medium',
     type: 'style',
     message: `StyleRecalc.perOperation=${stylePerOp}`,
     cause: 'class/style changes or Monaco/diff DOM mutations are causing style recalculation',
   })
-  addIssue(paintPerOp > (budgetForScenario.paintPerOperation ?? Infinity), {
+  addIssue(paintPerOp > (failBudget.paintPerOperation ?? Infinity), {
     severity: 'medium',
     type: 'paint',
     message: `Paint.perOperation=${paintPerOp}`,
@@ -1550,7 +1597,7 @@ function attachAnalysis(report, budget) {
   const scenarioBudgets = budget.scenarioBudgets || {}
   const results = report.results.map(result => ({
     ...result,
-    analysis: classifyScenario(result, scenarioBudgets[result.name]),
+    analysis: classifyScenario(result, scenarioBudgets[result.name], budget),
   }))
   return {
     ...report,
@@ -1623,6 +1670,14 @@ function buildMarkdownReport(report) {
         const formatted = typeof value === 'number' ? `${value}ms` : String(value)
         lines.push(`- ${name}: ${formatted}`)
       }
+      lines.push('')
+    }
+
+    if (result.streamUpdateHighlightSummary && result.streamUpdateHighlightSummary.count > 0) {
+      lines.push('Stream per-update highlight latency:')
+      lines.push(`- samples: ${result.streamUpdateHighlightSummary.count}`)
+      lines.push(`- p95: ${result.streamUpdateHighlightSummary.p95}ms`)
+      lines.push(`- max: ${result.streamUpdateHighlightSummary.max}ms`)
       lines.push('')
     }
 
@@ -1715,7 +1770,7 @@ function checkHardBudgets(results, budget) {
   const failures = []
   const scenarioBudgets = budget.scenarioBudgets || {}
   for (const result of results) {
-    const b = scenarioBudgets[result.name]
+    const b = { ...(budget.failBudget || {}), ...(scenarioBudgets[result.name] || {}) }
     if (!b)
       continue
     compareValue(failures, result.name, 'sampleSummary.p95', result.sampleSummary?.p95, b.sampleP95Ms, 'ms')
@@ -1725,6 +1780,8 @@ function checkHardBudgets(results, budget) {
     compareValue(failures, result.name, 'maxLongTaskMs', result.longTasks?.maxMs, b.maxLongTaskMs, 'ms')
     compareValue(failures, result.name, 'mainThreadBusyRatio', result.cdp?.mainThreadBusyRatio, b.mainThreadBusyRatio)
     compareValue(failures, result.name, 'activeBusyRatio', result.cdp?.activeBusyRatio, b.activeBusyRatio)
+    compareValue(failures, result.name, 'streamHighlightP95Ms', result.streamUpdateHighlightSummary?.p95, b.streamUpdateHighlightP95Ms, 'ms')
+    compareValue(failures, result.name, 'streamHighlightMaxMs', result.streamUpdateHighlightSummary?.max, b.streamUpdateHighlightMaxMs, 'ms')
     compareValue(failures, result.name, 'layoutCount', result.cdp?.layoutCount, b.layoutCount)
     compareValue(failures, result.name, 'recalcStyleCount', result.cdp?.recalcStyleCount, b.recalcStyleCount)
     compareValue(failures, result.name, 'Layout.perOperation', result.timeline?.Layout?.perOperation, b.layoutPerOperation)
@@ -1781,12 +1838,18 @@ function formatEnvironmentValue(value) {
 
 function getBaselineEnvironmentMismatches(currentEnvironment, baseline) {
   if (!baseline?.results?.length)
-    return []
+    return { hard: [], soft: [] }
   if (!baseline.environment)
-    return ['environment: current=present baseline=missing']
-  return comparableBaselineEnvironmentKeys
+    return { hard: ['environment: current=present baseline=missing'], soft: [] }
+  const hardKeys = ['platform', 'arch', 'chromium']
+  const softKeys = ['node', 'playwright', 'lockfileHash', 'cpuModel']
+  const hard = hardKeys
     .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
     .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])}`)
+  const soft = softKeys
+    .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
+    .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])} (advisory only)`)
+  return { hard, soft }
 }
 
 function printSummary(results) {
@@ -1876,6 +1939,10 @@ function summarizeBaselineResult(results) {
   const diffComputeSummary = summarizeBaselineSummary(results.map(result => result.diffComputeSummary).filter(Boolean))
   if (diffComputeSummary)
     out.diffComputeSummary = diffComputeSummary
+
+  const streamUpdateHighlightSummary = summarizeBaselineSummary(results.map(result => result.streamUpdateHighlightSummary).filter(Boolean))
+  if (streamUpdateHighlightSummary)
+    out.streamUpdateHighlightSummary = streamUpdateHighlightSummary
 
   return out
 }
@@ -1983,10 +2050,15 @@ async function main() {
   }
 
   const baselineEnvironmentMismatches = getBaselineEnvironmentMismatches(environment, baseline)
-  const baselineEnvironmentFailures = requireBaseline && baselineEnvironmentMismatches.length
-    ? [`Performance baseline environment mismatch: ${baselineEnvironmentMismatches.join(', ')}`]
+  const baselineEnvironmentFailures = requireBaseline && baselineEnvironmentMismatches.hard.length
+    ? [`Performance baseline environment mismatch: ${baselineEnvironmentMismatches.hard.join(', ')}`]
     : []
-  const canCompareBaseline = baseline?.results?.length && !baselineEnvironmentMismatches.length
+  if (baselineEnvironmentMismatches.soft.length) {
+    console.warn('Baseline environment advisory differences (regression check is best-effort):')
+    for (const msg of baselineEnvironmentMismatches.soft)
+      console.warn(`  ${msg}`)
+  }
+  const canCompareBaseline = baseline?.results?.length && !baselineEnvironmentMismatches.hard.length
   const failures = [
     ...(requireBaseline && !baseline?.results?.length
       ? [
