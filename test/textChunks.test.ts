@@ -40,4 +40,13 @@ describe('text chunk helpers', () => {
     const text = 'x'.repeat(10_000)
     expect(splitTextByLineBreakCount(text, 200)).toEqual([text])
   })
+
+  it('normalizes invalid chunk limits to a safe minimum', () => {
+    const text = 'a\nb\nc\n'
+
+    expect(splitTextByLineBreakCount(text, 0).join('')).toBe(text)
+    expect(splitTextByLineBreakCount(text, Number.NaN).join('')).toBe(text)
+    expect(splitTextByLineBreakCount(text, Number.POSITIVE_INFINITY).join('')).toBe(text)
+    expect(splitTextByLineBreakCount(text, -1).join('')).toBe(text)
+  })
 })

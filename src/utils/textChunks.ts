@@ -19,7 +19,10 @@ export function splitTextByLineBreakCount(
   if (!text)
     return []
 
-  const limit = Math.max(1, Math.floor(maxLineBreaksPerChunk))
+  const normalizedLimit = Math.floor(maxLineBreaksPerChunk)
+  const limit = Number.isNaN(normalizedLimit)
+    ? 1
+    : Math.max(1, normalizedLimit)
   const chunks: string[] = []
   let start = 0
   let lineBreaks = 0
