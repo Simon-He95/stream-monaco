@@ -65,12 +65,10 @@ if (skipBaseline && (updateBaseline || requireBaseline)) {
   process.exit(1)
 }
 
-// CI should fail on absolute performance budgets, but a committed baseline is
-// only comparable when it was generated on the same browser/OS/CPU class.  PR #9
-// currently commits a darwin/arm64 baseline while the workflow runs in a Linux
-// Playwright container, so the default gate intentionally disables baseline
-// comparison. Use `pnpm perf:gate:baseline` when running on a matching baseline
-// environment or after committing a CI-generated baseline.
+// A committed baseline is required by default (run `pnpm perf:baseline` on main
+// and commit the generated file). Use `--skip-baseline` for bootstrap-only
+// hard-budget checks. Baseline comparison is still skipped when the environment
+// (platform/arch/browser) does not match the committed baseline.
 if (skipBaseline)
   baselinePath = path.join(perfDir, '__stream-monaco-baseline-disabled__.json')
 
@@ -2048,6 +2046,11 @@ async function main() {
   await writePerfApp()
   const budget = await readJsonIfExists(budgetPath, { tolerance: 0.25, scenarioBudgets: {} })
   const baseline = await readJsonIfExists(baselinePath, null)
+  if (!updateBaseline && !reportOnly && !skipBaseline && !baseline?.results) {
+    console.error(`Missing committed performance baseline: ${path.relative(root, baselinePath)}`)
+    console.error('Run `pnpm perf:baseline` on main and commit the generated baseline, or pass --skip-baseline for bootstrap-only hard-budget checks.')
+    process.exit(1)
+  }
   const { server, baseUrl } = await startVite()
   const browser = await chromium.launch({
     headless: !headed,
