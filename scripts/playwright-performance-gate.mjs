@@ -894,7 +894,6 @@ async function prepareEditorWarmFirstHighlight() {
 
 async function runEditorUpdateHighlight() {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer('editor-update')
   const api = useMonaco(baseOptions({
     updateThrottleMs: 0,
@@ -905,6 +904,7 @@ async function runEditorUpdateHighlight() {
   let code = makeTsCode(160, 'SM_UPDATE_BASE')
   await api.createEditor(container, code, 'typescript')
   await waitForHighlight(container, 'SM_UPDATE_BASE')
+  const longTasks = observeLongTasks()
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
 
@@ -945,7 +945,6 @@ async function runEditorUpdateHighlight() {
 
 async function runEditorMiddleReplaceLargeDoc() {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer('editor-middle-replace')
   const api = useMonaco(baseOptions({
     updateThrottleMs: 0,
@@ -958,6 +957,7 @@ async function runEditorMiddleReplaceLargeDoc() {
   let code = lines.join('\\n')
   await api.createEditor(container, code, 'typescript')
   await waitForHighlight(container, 'SM_MIDDLE_REPLACE_BASE')
+  const longTasks = observeLongTasks()
 
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
@@ -1001,12 +1001,12 @@ async function runEditorMiddleReplaceLargeDoc() {
 
 async function runEditorStreamBurst(mode: 'full-update' | 'append') {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer(\`editor-burst-\${mode}\`)
   const api = useMonaco(baseOptions({ updateThrottleMs: 50, revealBatchOnIdleMs: 200 }))
   let code = 'export const SM_BURST_BASE = true\\n'
   await api.createEditor(container, code, 'typescript')
   await waitForHighlight(container, 'SM_BURST_BASE')
+  const longTasks = observeLongTasks()
   const start = performance.now()
   const operations = 500
   const perOperationSleepMs = 5
@@ -1107,7 +1107,6 @@ async function runDiffFirstHighlight(defaultOptions = false, extraOptions: any =
 
 async function runDiffUpdateHighlight() {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer('diff-update')
   const api = useMonaco(baseOptions({
     diffUpdateThrottleMs: 0,
@@ -1120,6 +1119,7 @@ async function runDiffUpdateHighlight() {
   let modified = makeTsCode(140, 'SM_DIFF_UPDATE_BASE_M')
   await api.createDiffEditor(container, original, modified, 'typescript')
   await waitForHighlight(container, 'SM_DIFF_UPDATE_BASE_M')
+  const longTasks = observeLongTasks()
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
   const diffComputeSamples: number[] = []
@@ -1167,7 +1167,6 @@ async function runDiffUpdateHighlight() {
 
 async function runDiffMiddleReplaceLargeDoc() {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer('diff-middle-replace')
   const api = useMonaco(baseOptions({
     diffUpdateThrottleMs: 0,
@@ -1183,6 +1182,7 @@ async function runDiffMiddleReplaceLargeDoc() {
   let modified = modifiedLines.join('\\n')
   await api.createDiffEditor(container, original, modified, 'typescript')
   await waitForHighlight(container, 'SM_DIFF_MIDDLE_REPLACE_BASE')
+  const longTasks = observeLongTasks()
 
   const samples: number[] = []
   const phaseSamples: Record<string, number[]> = {}
@@ -1233,13 +1233,13 @@ async function runDiffMiddleReplaceLargeDoc() {
 
 async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   resetRoot()
-  const longTasks = observeLongTasks()
   const container = createContainer(\`diff-burst-\${mode}\`)
   const api = useMonaco(baseOptions({ diffUpdateThrottleMs: 50, renderSideBySide: true, revealBatchOnIdleMs: 200 }))
   const original = makeTsCode(80, 'SM_DIFF_BURST_O')
   let modified = makeTsCode(80, 'SM_DIFF_BURST_M') + '\\nconsole.log("SM_DIFF_BURST_M")'
   await api.createDiffEditor(container, original, modified, 'typescript')
   await waitForHighlight(container, 'SM_DIFF_BURST_M')
+  const longTasks = observeLongTasks()
   const operations = 500
   const perOperationSleepMs = 5
   const streamTexts = Array.from({ length: operations }, (_, i) => \`\\nconsole.log("SM_DIFF_BURST_\${i}", \${i})\`)
@@ -1297,7 +1297,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     diffComputeSummary: summarizeNumbers([diffComputeMs]),
     streamUpdateHighlightSummary: summarizeNumbers(streamHighlightSamples),
     finalChars: modified.length,
-    longTasks: summarizeLongTasks(longTasks.stop()),
+    longTasks: longTaskSummary,
   }
 }
 
@@ -2066,7 +2066,12 @@ async function main() {
   await mkdir(perfDir, { recursive: true })
   await rm(perfAppDir, { recursive: true, force: true })
   await writePerfApp()
-  const budget = await readJsonIfExists(budgetPath, { tolerance: 0.25, scenarioBudgets: {} })
+  const budget = await readJsonIfExists(budgetPath, null)
+  if (!budget) {
+    console.error(`Missing performance budget file: ${path.relative(root, budgetPath)}`)
+    console.error('Create scripts/performance-budget.json with failBudget and scenarioBudgets before running the gate.')
+    process.exit(1)
+  }
   const baseline = await readJsonIfExists(baselinePath, null)
   if (!updateBaseline && !reportOnly && !skipBaseline && !baseline?.results) {
     console.error(`Missing committed performance baseline: ${path.relative(root, baselinePath)}`)
