@@ -115,7 +115,7 @@ jobs:
 
   performance-gate:
     runs-on: ubuntu-22.04
-    needs: [lint, test]
+    needs: [playwright-smoke]
     timeout-minutes: 30
     container:
       image: mcr.microsoft.com/playwright:v1.38.0-jammy
@@ -137,7 +137,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Performance gate
+      - name: Performance gate with committed baseline
         shell: bash
         run: pnpm perf:gate
 
