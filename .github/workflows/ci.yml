@@ -85,7 +85,7 @@ jobs:
 
   playwright-smoke:
     runs-on: ubuntu-22.04
-    needs: test
+    needs: [lint, test]
     timeout-minutes: 30
     container:
       image: mcr.microsoft.com/playwright:v1.38.0-jammy
@@ -115,7 +115,7 @@ jobs:
 
   performance-gate:
     runs-on: ubuntu-22.04
-    needs: test
+    needs: [lint, test]
     timeout-minutes: 30
     container:
       image: mcr.microsoft.com/playwright:v1.38.0-jammy
@@ -138,7 +138,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Performance gate
-        run: pnpm perf:gate
+        shell: bash
+        run: |
+          if [[ -f scripts/performance-baseline.json ]]; then
+            pnpm perf:gate
+          else
+            echo "::warning title=Missing performance baseline::scripts/performance-baseline.json is missing; running hard-budget gate only. Run 'pnpm perf:baseline' on main and commit the generated baseline before 1.0.0."
+            pnpm perf:gate:budget
+          fi
 
       - name: Analyze performance report
         if: always()

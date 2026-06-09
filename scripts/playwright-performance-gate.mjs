@@ -73,9 +73,10 @@ if (skipBaseline)
   baselinePath = path.join(perfDir, '__stream-monaco-baseline-disabled__.json')
 
 // Compare only stable runtime dimensions. Exact Node patch/minor versions are
-// too brittle when setup-node uses a floating LTS channel, but the Node major is
-// still useful because V8/runtime changes can materially affect benchmark data.
-const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'nodeMajor', 'playwright', 'chromium', 'lockfileHash']
+// too brittle when setup-node uses a floating LTS channel. Do not include the
+// lockfile hash here: dependency updates are exactly the PRs where we still want
+// to detect performance regressions against the committed baseline.
+const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'nodeMajor', 'playwright', 'chromium']
 
 const ALL_SCENARIOS = [
   'editor-cold-first-highlight-default-options',
