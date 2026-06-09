@@ -65,11 +65,12 @@ if (skipBaseline && (updateBaseline || requireBaseline)) {
   process.exit(1)
 }
 
-// A committed baseline is required by default (run `pnpm perf:baseline` on main
-// and commit the generated file). Use `--skip-baseline` for bootstrap-only
-// hard-budget checks. With --require-baseline, an environment mismatch between
-// the committed baseline and the current runtime causes a hard failure rather
-// than a silent skip.
+// Baseline comparison is intentionally opt-in and must be same-environment.
+// The package/CI `perf:gate` script runs hard-budget checks with --skip-baseline
+// so a local macOS/arm64 baseline cannot break an ubuntu/x64 CI runner.
+// Use `pnpm perf:gate:baseline` only when `scripts/performance-baseline.json`
+// was generated on the same runner image/runtime. With --require-baseline,
+// an environment mismatch remains a hard failure by design.
 if (skipBaseline)
   baselinePath = path.join(perfDir, '__stream-monaco-baseline-disabled__.json')
 
