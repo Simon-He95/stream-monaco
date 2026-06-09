@@ -115,7 +115,7 @@ jobs:
 
   performance-gate:
     runs-on: ubuntu-22.04
-    needs: [playwright-smoke]
+    needs: [lint, test]
     timeout-minutes: 30
     container:
       image: mcr.microsoft.com/playwright:v1.38.0-jammy
@@ -138,7 +138,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Performance gate
-        run: pnpm perf:gate
+        run: pnpm perf:gate:ci
 
       - name: Analyze performance report
         if: always()
