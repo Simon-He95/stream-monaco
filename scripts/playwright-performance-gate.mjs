@@ -37,15 +37,33 @@ const getArg = (name, fallback) => {
 }
 
 const entry = getArg('--entry', 'dist')
+const validEntries = new Set(['dist', 'src'])
+if (!validEntries.has(entry)) {
+  console.error(`Invalid --entry=${entry}. Expected one of: ${Array.from(validEntries).join(', ')}`)
+  process.exit(1)
+}
+
 const updateBaseline = has('--update-baseline')
 const reportOnly = has('--report-only')
 const requireBaseline = has('--require-baseline')
 const headed = has('--headed')
 const scenarioFilter = getArg('--scenario', '')
-const repeat = Number(getArg('--repeat', '1'))
-const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'node', 'playwright', 'chromium', 'lockfileHash']
+const repeatArgRaw = getArg('--repeat', '1')
+const repeatArg = Number(repeatArgRaw)
+const repeatExplicit = args.some(a => a.startsWith('--repeat='))
+if (repeatExplicit && (!Number.isFinite(repeatArg) || repeatArg < 1 || !Number.isInteger(repeatArg))) {
+  console.error(`Invalid --repeat=${repeatArgRaw}. Expected a positive integer.`)
+  process.exit(1)
+}
+const repeat = Number.isFinite(repeatArg) && repeatArg >= 1
+  ? Math.floor(repeatArg)
+  : 1
+// Compare only stable runtime dimensions. Exact Node patch/minor versions are
+// too brittle when setup-node uses a floating LTS channel, but the Node major is
+// still useful because V8/runtime changes can materially affect benchmark data.
+const comparableBaselineEnvironmentKeys = ['platform', 'arch', 'nodeMajor', 'playwright', 'chromium', 'lockfileHash']
 
-const SCENARIOS = [
+const ALL_SCENARIOS = [
   'editor-cold-first-highlight-default-options',
   'editor-cold-first-highlight',
   'editor-warm-first-highlight',
@@ -60,7 +78,12 @@ const SCENARIOS = [
   'diff-middle-replace-large-doc',
   'diff-stream-full-update-burst',
   'diff-stream-append-burst',
-].filter(name => !scenarioFilter || name === scenarioFilter)
+]
+const SCENARIOS = ALL_SCENARIOS.filter(name => !scenarioFilter || name === scenarioFilter)
+
+if (!SCENARIOS.length) {
+  throw new Error(`Unknown performance scenario "${scenarioFilter}". Available scenarios: ${ALL_SCENARIOS.join(', ')}`)
+}
 
 function nowIso() {
   return new Date().toISOString()
@@ -148,6 +171,7 @@ async function buildEnvironment(chromiumVersion) {
     platform: os.platform(),
     arch: os.arch(),
     node: process.version,
+    nodeMajor,
     playwright: await readPackageVersion('playwright'),
     chromium: chromiumVersion,
     cpuModel: os.cpus()[0]?.model ?? null,
@@ -1414,11 +1438,11 @@ async function runScenario(page, client, name) {
 }
 
 function stylePerOperation(result) {
-  return (
-    result.timeline?.UpdateLayoutTree?.perOperation
-    || result.timeline?.RecalculateStyles?.perOperation
-    || 0
-  )
+  const candidates = [
+    result.timeline?.UpdateLayoutTree?.perOperation,
+    result.timeline?.RecalculateStyles?.perOperation,
+  ].filter(v => typeof v === 'number' && Number.isFinite(v))
+  return candidates.length ? Math.max(...candidates) : 0
 }
 
 function classifyScenario(result, budgetForScenario = {}, globalBudget = {}) {
@@ -1802,7 +1826,11 @@ function checkHardBudgets(results, budget) {
     compareValue(failures, result.name, 'layoutCount', result.cdp?.layoutCount, b.layoutCount)
     compareValue(failures, result.name, 'recalcStyleCount', result.cdp?.recalcStyleCount, b.recalcStyleCount)
     compareValue(failures, result.name, 'Layout.perOperation', result.timeline?.Layout?.perOperation, b.layoutPerOperation)
-    const recalcPerOp = result.timeline?.RecalculateStyles?.perOperation || result.timeline?.UpdateLayoutTree?.perOperation
+    const recalcPerOpCandidates = [
+      result.timeline?.RecalculateStyles?.perOperation,
+      result.timeline?.UpdateLayoutTree?.perOperation,
+    ].filter(v => typeof v === 'number' && Number.isFinite(v))
+    const recalcPerOp = recalcPerOpCandidates.length ? Math.max(...recalcPerOpCandidates) : undefined
     compareValue(failures, result.name, 'StyleRecalc.perOperation', recalcPerOp, b.recalcStylePerOperation)
     compareValue(failures, result.name, 'Paint.perOperation', result.timeline?.Paint?.perOperation, b.paintPerOperation)
   }
@@ -1858,8 +1886,8 @@ function getBaselineEnvironmentMismatches(currentEnvironment, baseline) {
     return { hard: [], soft: [] }
   if (!baseline.environment)
     return { hard: ['environment: current=present baseline=missing'], soft: [] }
-  const hardKeys = ['platform', 'arch', 'chromium']
-  const softKeys = ['node', 'playwright', 'lockfileHash', 'cpuModel']
+  const hardKeys = ['platform', 'arch', 'nodeMajor', 'chromium']
+  const softKeys = ['playwright', 'lockfileHash', 'cpuModel']
   const hard = hardKeys
     .filter(key => currentEnvironment?.[key] !== baseline.environment?.[key])
     .map(key => `${key}: current=${formatEnvironmentValue(currentEnvironment?.[key])} baseline=${formatEnvironmentValue(baseline.environment?.[key])}`)
@@ -1929,7 +1957,7 @@ function summarizeBaselineResult(results) {
     : summarizeBaselineSummary(results.map(result => result.sampleSummary))
 
   const out = {
-    name: first.name,
+    name: first.scenario || first.name,
     entry: first.entry,
     runs: results.length,
     operations: Math.max(...results.map(result => result.operations || 1)),
@@ -1967,9 +1995,10 @@ function summarizeBaselineResult(results) {
 function buildBaselineReport(report) {
   const byName = new Map()
   for (const result of report.results) {
-    const results = byName.get(result.name) ?? []
+    const key = result.scenario || result.name
+    const results = byName.get(key) ?? []
     results.push(result)
-    byName.set(result.name, results)
+    byName.set(key, results)
   }
   return {
     generatedAt: report.generatedAt,
@@ -2030,9 +2059,9 @@ async function main() {
         try {
           await page.goto(url, { waitUntil: 'networkidle' })
           const result = await runScenario(page, client, scenario)
+          result.scenario = scenario
           if (repeat > 1) {
             result.name = `${scenario}#${i + 1}`
-            result.scenario = scenario
             result.repeatIndex = i + 1
           }
           results.push(result)
