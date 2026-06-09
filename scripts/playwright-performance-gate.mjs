@@ -25,7 +25,7 @@ const perfDir = path.join(root, '.perf')
 const perfAppDir = path.join(root, 'scripts/.perf-app')
 const reportPath = path.join(perfDir, 'stream-monaco-performance-report.json')
 const markdownReportPath = path.join(perfDir, 'stream-monaco-performance-report.md')
-const baselinePath = path.join(root, 'scripts/performance-baseline.json')
+let baselinePath = path.join(root, 'scripts/performance-baseline.json')
 const budgetPath = path.join(root, 'scripts/performance-budget.json')
 
 const args = process.argv.slice(2)
@@ -46,6 +46,7 @@ if (!validEntries.has(entry)) {
 const updateBaseline = has('--update-baseline')
 const reportOnly = has('--report-only')
 const requireBaseline = has('--require-baseline')
+const skipBaseline = has('--skip-baseline')
 const headed = has('--headed')
 const scenarioFilter = getArg('--scenario', '')
 const repeatArgRaw = getArg('--repeat', '1')
@@ -58,6 +59,21 @@ if (repeatExplicit && (!Number.isFinite(repeatArg) || repeatArg < 1 || !Number.i
 const repeat = Number.isFinite(repeatArg) && repeatArg >= 1
   ? Math.floor(repeatArg)
   : 1
+
+if (skipBaseline && (updateBaseline || requireBaseline)) {
+  console.error('--skip-baseline cannot be combined with --update-baseline or --require-baseline')
+  process.exit(1)
+}
+
+// CI should fail on absolute performance budgets, but a committed baseline is
+// only comparable when it was generated on the same browser/OS/CPU class.  PR #9
+// currently commits a darwin/arm64 baseline while the workflow runs in a Linux
+// Playwright container, so the default gate intentionally disables baseline
+// comparison. Use `pnpm perf:gate:baseline` when running on a matching baseline
+// environment or after committing a CI-generated baseline.
+if (skipBaseline)
+  baselinePath = path.join(perfDir, '__stream-monaco-baseline-disabled__.json')
+
 // Compare only stable runtime dimensions. Exact Node patch/minor versions are
 // too brittle when setup-node uses a floating LTS channel, but the Node major is
 // still useful because V8/runtime changes can materially affect benchmark data.

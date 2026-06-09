@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { splitTextByLineBreakCount } from '../src/utils/textChunks'
 
 function installRafMocks() {
   vi.stubGlobal('requestAnimationFrame', (cb: any) => {
@@ -426,7 +427,7 @@ describe('DiffEditorManager inline streaming updates', () => {
       { length: 220 },
       (_, i) => `line-${i} ${'x'.repeat(24)}\r\n`,
     ).join('') + 'tail without newline'
-    const chunks = manager.splitTextByLineChunks(text, 50)
+    const chunks = splitTextByLineBreakCount(text, 50)
 
     expect(chunks.length).toBeGreaterThan(1)
     expect(chunks.join('')).toBe(text)

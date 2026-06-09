@@ -27,6 +27,10 @@ import { log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 import {
+  countLineBreaks,
+  splitTextByLineBreakCount,
+} from '../utils/textChunks'
+import {
   applyDiffRootAppearanceClass,
   resolveDiffUnchangedLineInfoRailMetrics,
 } from './diffAppearance'
@@ -5470,11 +5474,11 @@ export class DiffEditorManager {
     const prevLineInit = model.getLineCount()
     const totalText = parts.join('')
     const totalChars = totalText.length
-    const totalLineBreaks = this.countLineBreaks(totalText)
+    const totalLineBreaks = countLineBreaks(totalText)
     // If we received a single very large chunk, split it by lines into smaller
     // chunks so the editor can render and scroll progressively.
     if (parts.length === 1 && totalChars > 5000) {
-      const chunks = this.splitTextByLineChunks(totalText, 200)
+      const chunks = splitTextByLineBreakCount(totalText, 200)
       if (chunks.length > 1) {
         parts = chunks
       }
@@ -5650,28 +5654,6 @@ export class DiffEditorManager {
     if (model === this.modifiedModel) {
       this.lastKnownModifiedLineCount = model.getLineCount()
     }
-  }
-
-  private splitTextByLineChunks(text: string, chunkLineCount: number) {
-    // Preserve exact text; split/join would add trailing newlines and normalize CRLF.
-    const parts
-      = text.match(/[^\r\n]*(?:\r\n|\r|\n|$)/g)?.filter(Boolean) ?? [text]
-    if (parts.length <= chunkLineCount)
-      return [text]
-
-    const chunks: string[] = []
-    for (let i = 0; i < parts.length; i += chunkLineCount)
-      chunks.push(parts.slice(i, i + chunkLineCount).join(''))
-    return chunks
-  }
-
-  private countLineBreaks(text: string) {
-    let count = 0
-    for (let i = 0; i < text.length; i++) {
-      if (text.charCodeAt(i) === 10)
-        count += 1
-    }
-    return count
   }
 
   private getModelValueLength(model: monaco.editor.ITextModel) {
