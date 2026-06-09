@@ -225,6 +225,9 @@ function analyzeScenario(result, budget) {
     metricScore(metrics.longTasks, budget.longTaskCount),
     metricScore(metrics.maxLongTaskMs, budget.maxLongTaskMs),
     metricScore(metrics.busyRatio, busyBudget),
+    metricScore(metrics.layoutCount, budget.layoutCount),
+    metricScore(metrics.recalcCount, budget.recalcStyleCount),
+    metricScore(metrics.paintCount, budget.paintCount),
     metricScore(metrics.layoutPerOp, budget.layoutPerOperation),
     metricScore(metrics.stylePerOp, budget.recalcStylePerOperation),
     metricScore(metrics.paintPerOp, budget.paintPerOperation),
@@ -249,14 +252,14 @@ function analyzeScenario(result, budget) {
 }
 
 function markdownTable(rows) {
-  const headers = ['scenario', 'status', 'bottleneck', 'p95', 'max', 'longTasks', 'busy', 'task/op', 'script/op', 'tokenize/op', 'grammar/op', 'layout/op', 'style/op', 'paint/op']
+  const headers = ['scenario', 'status', 'bottleneck', 'p95', 'max', 'longTasks', 'busy', 'task/op', 'script/op', 'tokenize/op', 'grammar/op', 'layoutCount', 'styleCount', 'paintCount', 'layout/op', 'style/op', 'paint/op']
   const lines = [
     `| ${headers.join(' | ')} |`,
     `| ${headers.map(() => '---').join(' | ')} |`,
   ]
   for (const row of rows) {
     const m = row.metrics
-    lines.push(`| ${row.scenario} | ${row.status} | ${row.bottleneck} | ${round(m.p95Ms)}ms | ${round(m.maxMs)}ms | ${m.longTasks} | ${round(m.busyRatio, 3)} | ${round(m.taskPerOpMs)}ms | ${round(m.scriptPerOpMs)}ms | ${round(m.tokenizationPerOpMs)}ms | ${round(m.grammarTokenizationPerOpMs)}ms | ${round(m.layoutPerOp, 3)} | ${round(m.stylePerOp, 3)} | ${round(m.paintPerOp, 3)} |`)
+    lines.push(`| ${row.scenario} | ${row.status} | ${row.bottleneck} | ${round(m.p95Ms)}ms | ${round(m.maxMs)}ms | ${m.longTasks} | ${round(m.busyRatio, 3)} | ${round(m.taskPerOpMs)}ms | ${round(m.scriptPerOpMs)}ms | ${round(m.tokenizationPerOpMs)}ms | ${round(m.grammarTokenizationPerOpMs)}ms | ${m.layoutCount} | ${m.recalcCount} | ${m.paintCount} | ${round(m.layoutPerOp, 3)} | ${round(m.stylePerOp, 3)} | ${round(m.paintPerOp, 3)} |`)
   }
   return lines.join('\n')
 }
