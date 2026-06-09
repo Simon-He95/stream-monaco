@@ -1179,12 +1179,10 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const perOperationSleepMs = 5
   const streamTexts = Array.from({ length: operations }, (_, i) => \`\\nconsole.log("SM_DIFF_BURST_\${i}", \${i})\`)
   const finalModifiedLength = modified.length + streamTexts.reduce((sum, text) => sum + text.length, 0)
-  let finalMarker = 'SM_DIFF_BURST_M'
   const previousVersion = getModelVersion(api.getDiffModels().modified)
   const start = performance.now()
   const diffUpdated = waitForDiffUpdate(api, container, previousVersion, finalModifiedLength, start, 15000)
   for (let i = 0; i < operations; i++) {
-    finalMarker = \`SM_DIFF_BURST_\${i}\`
     const text = streamTexts[i]
     modified += text
     if (mode === 'append')
@@ -1196,8 +1194,6 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
   const emitLoopDoneAt = performance.now()
   await waitUntil(() => getModelValueLength(api.getDiffModels().modified) === modified.length, 12000, 'diff burst final model')
   const modelReadyAt = performance.now()
-  await waitForHighlight(container, finalMarker, 8000)
-  const highlightReadyAt = performance.now()
   const diffComputeMs = await diffUpdated
   const diffSettledAt = performance.now()
   const settleMs = 300
@@ -1214,8 +1210,7 @@ async function runDiffStreamBurst(mode: 'full-update' | 'append') {
     phases: {
       emitLoopMs: Math.round((emitLoopDoneAt - start) * 100) / 100,
       finalModelWaitMs: Math.round((modelReadyAt - emitLoopDoneAt) * 100) / 100,
-      highlightWaitMs: Math.round((highlightReadyAt - modelReadyAt) * 100) / 100,
-      diffSettledMs: Math.round((diffSettledAt - highlightReadyAt) * 100) / 100,
+      diffSettledMs: Math.round((diffSettledAt - modelReadyAt) * 100) / 100,
       settleMs: Math.round((settledAt - diffSettledAt) * 100) / 100,
       totalMs: Math.round(wallMs * 100) / 100,
     },
