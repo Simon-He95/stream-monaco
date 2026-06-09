@@ -4,7 +4,7 @@ permissions:
   id-token: write
   contents: write
 
-on:
+"on":
   push:
     tags:
       - 'v*'
@@ -12,6 +12,8 @@ on:
 jobs:
   release:
     runs-on: ubuntu-22.04
+    env:
+      NPM_TOKEN_PRESENT: ${{ secrets.NPM_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +38,7 @@ jobs:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
       - run: pnpm publish --no-git-checks --access public
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        if: env.NPM_TOKEN_PRESENT == 'true'
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
           NPM_CONFIG_PROVENANCE: true
