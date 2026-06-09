@@ -47,6 +47,7 @@ const updateBaseline = has('--update-baseline')
 const reportOnly = has('--report-only')
 const requireBaseline = has('--require-baseline')
 const skipBaseline = has('--skip-baseline')
+const allowPartialBaseline = has('--allow-partial-baseline')
 const headed = has('--headed')
 const scenarioFilter = getArg('--scenario', '')
 const repeatArgRaw = getArg('--repeat', '1')
@@ -62,6 +63,11 @@ const repeat = Number.isFinite(repeatArg) && repeatArg >= 1
 
 if (skipBaseline && (updateBaseline || requireBaseline)) {
   console.error('--skip-baseline cannot be combined with --update-baseline or --require-baseline')
+  process.exit(1)
+}
+
+if (updateBaseline && scenarioFilter && !allowPartialBaseline) {
+  console.error('Refusing to update a partial baseline. Remove --scenario, or pass --allow-partial-baseline intentionally.')
   process.exit(1)
 }
 
