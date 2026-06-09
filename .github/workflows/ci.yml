@@ -137,9 +137,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Performance gate with committed baseline
+      # PR #9 does not commit scripts/performance-baseline.json, so the default
+      # CI gate must use hard budgets only. After generating and committing a
+      # same-runner baseline, this can be switched to `pnpm perf:gate:baseline`.
+      - name: Performance budget gate
         shell: bash
-        run: pnpm perf:gate
+        run: pnpm perf:gate:budget
 
       - name: Analyze performance report
         if: always()

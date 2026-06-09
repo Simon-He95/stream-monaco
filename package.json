@@ -87,7 +87,7 @@
     "bench": "node scripts/stream-benchmark.mjs",
     "bench:playwright": "node scripts/playwright-bench.mjs",
     "perf:report": "pnpm build && node scripts/playwright-performance-gate.mjs --entry=dist --report-only",
-    "perf:gate": "pnpm perf:gate:baseline",
+    "perf:gate": "pnpm perf:gate:budget",
     "perf:gate:budget": "pnpm build && node scripts/playwright-performance-gate.mjs --entry=dist --skip-baseline",
     "perf:gate:baseline": "pnpm build && node scripts/playwright-performance-gate.mjs --entry=dist --require-baseline",
     "perf:gate:src": "node scripts/playwright-performance-gate.mjs --entry=src",
