@@ -131,7 +131,7 @@
     "tsdown": "^0.12.9",
     "tsx": "^3.14.0",
     "typescript": "^5.9.3",
-    "vite": "^7.0.0",
+    "vite": "^7.3.3",
     "vitest": "^3.2.4"
   },
   "lint-staged": {

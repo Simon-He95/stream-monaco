@@ -359,12 +359,12 @@ function cleanupPerfEditor(api: ReturnType<typeof useMonaco>) {
 
 function makeTsCode(lines: number, marker = 'SM_MARK') {
   const out: string[] = [
-    \`export const \${marker} = true\`,
     'interface User { id: number; name: string; active: boolean }',
   ]
   for (let i = 0; i < lines; i++) {
     out.push(\`export function fn_\${i}(u: User) { return u.active ? u.name + "\${i}" : String(u.id) }\`)
   }
+  out.push(\`export const \${marker} = true\`)
   return out.join('\\n')
 }
 
@@ -990,7 +990,7 @@ async function runEditorUpdateHighlight() {
 
   for (let i = 0; i < 80; i++) {
     const marker = \`SM_UPDATE_\${i}\`
-    code = code.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
+    code = makeTsCode(160, marker)
     const previousVersion = getModelVersion(api.getEditorView()?.getModel())
     const start = performance.now()
     api.updateCode(code, 'typescript')
@@ -1207,7 +1207,7 @@ async function runDiffUpdateHighlight() {
 
   for (let i = 0; i < 60; i++) {
     const marker = \`SM_DIFF_UPDATE_\${i}\`
-    modified = modified.replace(/^export const .* = true/m, \`export const \${marker} = true\`)
+    modified = makeTsCode(140, marker)
     const previousVersion = getModelVersion(api.getDiffModels().modified)
     const start = performance.now()
     const diffUpdated = waitForNextDiffUpdate(api, 8000, 'diff update highlight recompute')
