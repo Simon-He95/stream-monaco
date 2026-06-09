@@ -449,6 +449,33 @@ describe('DiffEditorManager inline streaming updates', () => {
     manager.cleanup()
   })
 
+  it('preserves exact CRLF text with no trailing newline through append buffer flush', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const tail = Array.from({ length: 450 }, (_, i) => `line-${i}`).join('\r\n') + 'NO_EOL'
+    // Push a single large chunk that will be split internally
+    manager.appendBufferModifiedDiff.push(tail)
+    await manager.flushAppendBufferDiff()
+
+    const { modified } = manager.getDiffModels()
+    expect(modified.getValue().endsWith(tail)).toBe(true)
+    manager.cleanup()
+  })
+
+  it('original-only append does not modify the modified model content', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { original, modified } = manager.getDiffModels()
+    const initialModified = modified.getValue()
+
+    manager.appendBufferOriginalDiff.push('only original\n')
+    await manager.flushAppendBufferDiff()
+
+    // Modified side must be completely untouched
+    expect(modified.getValue()).toBe(initialModified)
+    // Original must have received the append
+    expect(original.getValue().endsWith('only original\n')).toBe(true)
+    manager.cleanup()
+  })
+
   it('flushes pending replacement updates before refreshing diff presentation', async () => {
     const manager = await createManager({ renderSideBySide: false })
     ;(manager as any).lastContainer.style.removeProperty = vi.fn()

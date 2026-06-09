@@ -9,6 +9,7 @@ const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'
 const LEGACY_MONACO_LANGS_INIT_KEY = '__streamMonacoLegacyMonacoLangsInit__'
 // Private benchmark hooks; not a public API.
 const PERF_HOOKS_ENABLED_KEY = '__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__'
+let instrumentedHighlighterCache = new WeakMap<object, import('../type').ShikiHighlighter>()
 
 async function awaitLegacyOnigurumaInitIfPresent() {
   try {
@@ -220,15 +221,31 @@ function maybeInstrumentHighlighterGrammar(
 ) {
   if (!getGrammarTokenizationPerfHook())
     return highlighter
-  return new Proxy(highlighter as any, {
+
+  if (
+    !highlighter
+    || (typeof highlighter !== 'object' && typeof highlighter !== 'function')
+  ) {
+    return highlighter
+  }
+
+  const cached = instrumentedHighlighterCache.get(highlighter as object)
+  if (cached)
+    return cached
+
+  const grammarProxyCache = new WeakMap<object, any>()
+  const instrumentedHighlighter = new Proxy(highlighter as any, {
     get(target, prop, _receiver) {
       if (prop !== 'getLanguage')
         return getProxyMember(target, prop)
       return (language: string) => {
         const grammar = target.getLanguage(language)
-        if (!grammar || typeof grammar.tokenizeLine2 !== 'function')
+        if (!grammar || typeof grammar !== 'object' || typeof grammar.tokenizeLine2 !== 'function')
           return grammar
-        return new Proxy(grammar, {
+        const cachedGrammar = grammarProxyCache.get(grammar as object)
+        if (cachedGrammar)
+          return cachedGrammar
+        const instrumentedGrammar = new Proxy(grammar, {
           get(grammarTarget, grammarProp, _grammarReceiver) {
             if (grammarProp !== 'tokenizeLine2')
               return getProxyMember(grammarTarget, grammarProp)
@@ -247,9 +264,14 @@ function maybeInstrumentHighlighterGrammar(
             }
           },
         })
+        grammarProxyCache.set(grammar as object, instrumentedGrammar)
+        return instrumentedGrammar
       }
     },
   })
+
+  instrumentedHighlighterCache.set(highlighter as object, instrumentedHighlighter as import('../type').ShikiHighlighter)
+  return instrumentedHighlighter as import('../type').ShikiHighlighter
 }
 
 async function ensureMonacoHighlighter(
@@ -347,6 +369,7 @@ export function clearHighlighterCache() {
   monacoThemeByKey.clear()
   monacoLanguageSet.clear()
   themeRegisterPromise = null
+  instrumentedHighlighterCache = new WeakMap()
   languagesRegistered = false
   currentLanguages = []
 }
