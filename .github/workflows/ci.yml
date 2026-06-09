@@ -137,17 +137,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Keep PRs usable before the baseline file is committed, but automatically
-      # upgrade CI to the same-environment baseline gate once
-      # scripts/performance-baseline.json exists.
       - name: Performance gate
-        shell: bash
-        run: |
-          if [[ -f scripts/performance-baseline.json ]]; then
-            pnpm perf:gate:baseline
-          else
-            pnpm perf:gate:budget
-          fi
+        run: pnpm perf:gate
 
       - name: Analyze performance report
         if: always()
