@@ -5516,6 +5516,16 @@ export class DiffEditorManager {
       log('diff', 'flushAppendBufferDiff applying chunked', {
         partsLen: parts.length,
       })
+      // Seed lastKnownModifiedCode once before the chunk loop so
+      // mergeKnownAppend can use O(1) string concatenation instead of
+      // calling model.getValue() on every chunk.
+      if (this.lastKnownModifiedCode == null) {
+        this.lastKnownModifiedCode = model.getValue()
+      }
+      // Track model length incrementally to avoid calling
+      // getModelValueLength (which may fall back to O(n) getValue())
+      // on every chunk.
+      let currentLength = this.lastKnownModifiedCode.length
       let idx = 0
       for (const part of parts) {
         if (!part)
@@ -5527,7 +5537,8 @@ export class DiffEditorManager {
           prevLine,
         })
         this.preserveNativeDiffDecorationsOnStaleAppend = true
-        this.appendToModel(model, part)
+        this.appendToModel(model, part, currentLength)
+        currentLength += part.length
         const newLine = model.getLineCount()
         this.lastKnownModifiedLineCount = newLine
         // try to let the editor update layout before scheduling reveal/scroll
@@ -5564,6 +5575,9 @@ export class DiffEditorManager {
         prevLine = newLine
         log('diff', 'flushAppendBufferDiff chunk applied', { idx, newLine })
       }
+      // Sync lastKnownModifiedCode once after all chunks are applied
+      // so we have an authoritative snapshot without per-chunk O(n) cost.
+      this.lastKnownModifiedCode = model.getValue()
       // restore suppression state
       if (suppressedByFlush) {
         watcherApi.setSuppressed(false)
@@ -5716,10 +5730,15 @@ export class DiffEditorManager {
     }
   }
 
-  private appendToModel(model: monaco.editor.ITextModel, appendText: string) {
+  private appendToModel(
+    model: monaco.editor.ITextModel,
+    appendText: string,
+    knownLength?: number,
+  ) {
     if (!appendText)
       return
-    const previousLength = this.getModelValueLength(model)
+    const previousLength
+      = knownLength != null ? knownLength : this.getModelValueLength(model)
     const lastLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
