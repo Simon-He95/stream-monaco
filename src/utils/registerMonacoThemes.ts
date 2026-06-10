@@ -7,6 +7,9 @@ import { arraysEqual } from './arraysEqual'
 const LEGACY_ONIG_INIT_KEY = '__streamMonacoLegacyOnigurumaInit__'
 const LEGACY_ENGINE_KEY = '__streamMonacoLegacyShikiEngine__'
 const LEGACY_MONACO_LANGS_INIT_KEY = '__streamMonacoLegacyMonacoLangsInit__'
+// Private benchmark hooks; not a public API.
+const PERF_HOOKS_ENABLED_KEY = '__STREAM_MONACO_ENABLE_INTERNAL_PERF_HOOKS__'
+let instrumentedHighlighterCache = new WeakMap<object, import('../type').ShikiHighlighter>()
 
 async function awaitLegacyOnigurumaInitIfPresent() {
   try {
@@ -88,8 +91,187 @@ let lastPatchedLanguages = new Set<string>()
 const monacoThemeByKey = new Map<string, ThemeInput | string | SpecialTheme>()
 const monacoLanguageSet = new Set<string>()
 
+function nowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+}
+
+function isPerfHooksEnabled() {
+  try {
+    return typeof globalThis !== 'undefined'
+      && (globalThis as any)?.[PERF_HOOKS_ENABLED_KEY] === true
+  }
+  catch {
+    return false
+  }
+}
+
+function getPerfHook(name: 'recordTokenize' | 'recordGrammarTokenize' | 'recordThemeRegistration') {
+  if (!isPerfHooksEnabled())
+    return null
+  try {
+    if (typeof globalThis === 'undefined')
+      return null
+    const hook = (globalThis as any).__STREAM_MONACO_PERF__?.[name]
+    return typeof hook === 'function' ? hook : null
+  }
+  catch {
+    return null
+  }
+}
+
+function getTokenizationPerfHook() {
+  return getPerfHook('recordTokenize')
+}
+
+function getGrammarTokenizationPerfHook() {
+  return getPerfHook('recordGrammarTokenize')
+}
+
+function getThemeRegistrationPerfHook() {
+  return getPerfHook('recordThemeRegistration')
+}
+
+function recordTokenize(
+  hook: ((event: {
+    language: string
+    durationMs: number
+    lineLength: number
+    lineSample: string
+    tokenCount: number
+    failed: boolean
+  }) => void) | null,
+  language: string,
+  durationMs: number,
+  line: string,
+  tokenCount: number,
+  failed: boolean,
+) {
+  if (!hook)
+    return
+  try {
+    hook({
+      language,
+      durationMs,
+      lineLength: line.length,
+      lineSample: line.slice(0, 120),
+      tokenCount,
+      failed,
+    })
+  }
+  catch {}
+}
+
+function recordGrammarTokenize(
+  language: string,
+  durationMs: number,
+  line: string,
+  stoppedEarly: boolean,
+  tokenCount: number,
+) {
+  const hook = getGrammarTokenizationPerfHook()
+  if (!hook)
+    return
+  try {
+    hook({
+      language,
+      durationMs,
+      lineLength: line.length,
+      lineSample: line.slice(0, 120),
+      stoppedEarly,
+      tokenCount,
+    })
+  }
+  catch {}
+}
+
+function recordThemeRegistration(
+  event: {
+    durationMs: number
+    ensureHighlighterMs: number
+    patchMonacoMs: number
+    themes: number
+    languages: number
+    patchedMonaco: boolean
+  },
+) {
+  const hook = getThemeRegistrationPerfHook()
+  if (!hook)
+    return
+  try {
+    hook(event)
+  }
+  catch {}
+}
+
+function getProxyMember(target: any, prop: string | symbol) {
+  const value = Reflect.get(target, prop, target)
+  // Keep Shiki/TextMate methods bound to their real object. Calling methods with
+  // `this` set to a Proxy can break implementations that depend on private state.
+  return typeof value === 'function' ? value.bind(target) : value
+}
+
 function themeKey(t: ThemeInput | string | SpecialTheme) {
   return typeof t === 'string' ? t : (t as any).name ?? JSON.stringify(t)
+}
+
+function maybeInstrumentHighlighterGrammar(
+  highlighter: import('../type').ShikiHighlighter,
+) {
+  if (!getGrammarTokenizationPerfHook())
+    return highlighter
+
+  if (
+    !highlighter
+    || (typeof highlighter !== 'object' && typeof highlighter !== 'function')
+  ) {
+    return highlighter
+  }
+
+  const cached = instrumentedHighlighterCache.get(highlighter as object)
+  if (cached)
+    return cached
+
+  const grammarProxyCache = new WeakMap<object, any>()
+  const instrumentedHighlighter = new Proxy(highlighter as any, {
+    get(target, prop, _receiver) {
+      if (prop !== 'getLanguage')
+        return getProxyMember(target, prop)
+      return (language: string) => {
+        const grammar = target.getLanguage(language)
+        if (!grammar || typeof grammar !== 'object' || typeof grammar.tokenizeLine2 !== 'function')
+          return grammar
+        const cachedGrammar = grammarProxyCache.get(grammar as object)
+        if (cachedGrammar)
+          return cachedGrammar
+        const instrumentedGrammar = new Proxy(grammar, {
+          get(grammarTarget, grammarProp, _grammarReceiver) {
+            if (grammarProp !== 'tokenizeLine2')
+              return getProxyMember(grammarTarget, grammarProp)
+            const originalTokenizeLine2 = grammarTarget.tokenizeLine2.bind(grammarTarget)
+            return (line: string, ruleStack: any, timeLimit: number) => {
+              const startedAt = nowMs()
+              const result = originalTokenizeLine2(line, ruleStack, timeLimit)
+              recordGrammarTokenize(
+                language,
+                nowMs() - startedAt,
+                line,
+                !!result?.stoppedEarly,
+                typeof result?.tokens?.length === 'number' ? result.tokens.length / 2 : 0,
+              )
+              return result
+            }
+          },
+        })
+        grammarProxyCache.set(grammar as object, instrumentedGrammar)
+        return instrumentedGrammar
+      }
+    },
+  })
+
+  instrumentedHighlighterCache.set(highlighter as object, instrumentedHighlighter as import('../type').ShikiHighlighter)
+  return instrumentedHighlighter as import('../type').ShikiHighlighter
 }
 
 async function ensureMonacoHighlighter(
@@ -107,7 +289,13 @@ async function ensureMonacoHighlighter(
     const initialThemes = Array.from(monacoThemeByKey.values())
     const initialLangs = Array.from(monacoLanguageSet.values())
     monacoHighlighterPromise = createHighlighterWithLegacyEngineIfNeeded({ themes: initialThemes, langs: initialLangs })
-      .then(h => h)
+      .then((h) => {
+        ;(h as any).__streamMonacoLoadedThemes = new Set(
+          initialThemes.map(t => themeKey(t)),
+        )
+        ;(h as any).__streamMonacoLoadedLangs = new Set(initialLangs)
+        return h
+      })
   }
 
   const h = await monacoHighlighterPromise
@@ -155,7 +343,13 @@ async function ensureMonacoHighlighter(
 
   // fallback: recreate shared highlighter with union
   const p = createHighlighterWithLegacyEngineIfNeeded({ themes: wantsThemes, langs: wantsLangs })
-    .then(hh => hh)
+    .then((hh) => {
+      ;(hh as any).__streamMonacoLoadedThemes = new Set(
+        wantsThemes.map(t => themeKey(t)),
+      )
+      ;(hh as any).__streamMonacoLoadedLangs = new Set(wantsLangs)
+      return hh
+    })
   monacoHighlighterPromise = p
   return p
 }
@@ -175,6 +369,7 @@ export function clearHighlighterCache() {
   monacoThemeByKey.clear()
   monacoLanguageSet.clear()
   themeRegisterPromise = null
+  instrumentedHighlighterCache = new WeakMap()
   languagesRegistered = false
   currentLanguages = []
 }
@@ -279,10 +474,16 @@ export async function registerMonacoThemes(
   languages: string[],
 ): Promise<import('../type').ShikiHighlighter | null> {
   return enqueueRegistration(async () => {
+    const registrationStartedAt = nowMs()
+    let ensureHighlighterMs = 0
+    let patchMonacoMs = 0
+    let patchedMonaco = false
     registerMonacoLanguages(languages)
 
     const p = (async () => {
+      const ensureHighlighterStartedAt = nowMs()
       const highlighter = await ensureMonacoHighlighter(themes, languages)
+      ensureHighlighterMs = nowMs() - ensureHighlighterStartedAt
 
       // Patch Monaco when:
       // - the shared highlighter instance changes, OR
@@ -330,14 +531,26 @@ export async function registerMonacoThemes(
                 provider = {
                   ...provider,
                   tokenize(line: string, state: any) {
+                    const hook = getTokenizationPerfHook()
+                    const startedAt = hook ? nowMs() : 0
+                    let tokenCount = 0
+                    let failed = false
                     try {
-                      return originalTokenize(line, state)
+                      const result = originalTokenize(line, state)
+                      tokenCount = Array.isArray(result?.tokens) ? result.tokens.length : 0
+                      return result
                     }
                     catch {
+                      failed = true
+                      tokenCount = 1
                       return {
                         endState: state,
                         tokens: [{ startIndex: 0, scopes: '' }],
                       }
+                    }
+                    finally {
+                      if (hook)
+                        recordTokenize(hook, lang, nowMs() - startedAt, line, tokenCount, failed)
                     }
                   },
                 }
@@ -347,7 +560,10 @@ export async function registerMonacoThemes(
           },
         }
 
-        shikiToMonaco(highlighter, monacoProxy)
+        const patchMonacoStartedAt = nowMs()
+        shikiToMonaco(maybeInstrumentHighlighterGrammar(highlighter), monacoProxy)
+        patchMonacoMs = nowMs() - patchMonacoStartedAt
+        patchedMonaco = true
         lastPatchedHighlighter = highlighter
         lastPatchedLanguages = new Set(wantsLangs)
       }
@@ -360,6 +576,14 @@ export async function registerMonacoThemes(
     setThemeRegisterPromise(p)
     try {
       const res = await p
+      recordThemeRegistration({
+        durationMs: nowMs() - registrationStartedAt,
+        ensureHighlighterMs,
+        patchMonacoMs,
+        themes: themes.length,
+        languages: languages.length,
+        patchedMonaco,
+      })
       return res
     }
     catch (e) {

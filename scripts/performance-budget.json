@@ -1,0 +1,157 @@
+{
+  "tolerance": 0.25,
+  "warningBudget": {
+    "mainThreadBusyRatio": 0.75,
+    "maxLongTaskMs": 200,
+    "longTaskCount": 12
+  },
+  "failBudget": {
+    "mainThreadBusyRatio": 0.92,
+    "maxLongTaskMs": 250,
+    "longTaskCount": 20
+  },
+  "scenarioBudgets": {
+    "editor-cold-first-highlight-default-options": {
+      "sampleP95Ms": 3000,
+      "sampleMaxMs": 4200,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 350,
+      "mainThreadBusyRatio": 0.9,
+      "layoutCount": 140,
+      "recalcStyleCount": 260
+    },
+    "editor-cold-first-highlight": {
+      "sampleP95Ms": 2500,
+      "sampleMaxMs": 3500,
+      "longTaskCount": 8,
+      "maxLongTaskMs": 300,
+      "mainThreadBusyRatio": 0.95,
+      "layoutCount": 120,
+      "recalcStyleCount": 220
+    },
+    "editor-warm-first-highlight": {
+      "sampleP95Ms": 500,
+      "sampleMaxMs": 900,
+      "longTaskCount": 4,
+      "maxLongTaskMs": 180,
+      "mainThreadBusyRatio": 0.9,
+      "layoutCount": 80,
+      "recalcStyleCount": 160
+    },
+    "editor-update-highlight": {
+      "sampleP95Ms": 100,
+      "sampleMaxMs": 160,
+      "longTaskCount": 5,
+      "maxLongTaskMs": 150,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 4,
+      "recalcStylePerOperation": 8,
+      "paintPerOperation": 8
+    },
+    "editor-middle-replace-large-doc": {
+      "sampleP95Ms": 350,
+      "sampleMaxMs": 650,
+      "longTaskCount": 8,
+      "maxLongTaskMs": 220,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 4,
+      "recalcStylePerOperation": 8,
+      "paintPerOperation": 8
+    },
+    "editor-stream-full-update-burst": {
+      "wallMs": 7500,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 300,
+      "mainThreadBusyRatio": 0.75,
+      "activeBusyRatio": 0.9,
+      "layoutPerOperation": 1.5,
+      "recalcStylePerOperation": 3,
+      "paintPerOperation": 3,
+      "streamUpdateHighlightP95Ms": 200,
+      "streamUpdateHighlightMaxMs": 400
+    },
+    "editor-stream-append-burst": {
+      "wallMs": 7000,
+      "longTaskCount": 10,
+      "maxLongTaskMs": 300,
+      "mainThreadBusyRatio": 0.75,
+      "activeBusyRatio": 0.9,
+      "layoutPerOperation": 1.5,
+      "recalcStylePerOperation": 3,
+      "paintPerOperation": 3,
+      "streamUpdateHighlightP95Ms": 160,
+      "streamUpdateHighlightMaxMs": 320
+    },
+    "diff-cold-first-highlight-default-options": {
+      "sampleP95Ms": 4200,
+      "sampleMaxMs": 5800,
+      "longTaskCount": 14,
+      "maxLongTaskMs": 450,
+      "mainThreadBusyRatio": 0.92,
+      "layoutCount": 220,
+      "recalcStyleCount": 360
+    },
+    "diff-cold-first-highlight": {
+      "sampleP95Ms": 3500,
+      "sampleMaxMs": 5000,
+      "longTaskCount": 12,
+      "maxLongTaskMs": 400,
+      "mainThreadBusyRatio": 0.92,
+      "layoutCount": 180,
+      "recalcStyleCount": 300
+    },
+    "diff-cold-first-highlight-no-unchanged-regions": {
+      "sampleP95Ms": 3500,
+      "sampleMaxMs": 5000,
+      "longTaskCount": 12,
+      "maxLongTaskMs": 400,
+      "mainThreadBusyRatio": 0.92,
+      "layoutCount": 180,
+      "recalcStyleCount": 300
+    },
+    "diff-update-highlight": {
+      "sampleP95Ms": 160,
+      "sampleMaxMs": 240,
+      "longTaskCount": 6,
+      "maxLongTaskMs": 180,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 6,
+      "recalcStylePerOperation": 12,
+      "paintPerOperation": 12
+    },
+    "diff-middle-replace-large-doc": {
+      "sampleP95Ms": 600,
+      "sampleMaxMs": 1000,
+      "longTaskCount": 18,
+      "maxLongTaskMs": 260,
+      "mainThreadBusyRatio": 0.9,
+      "layoutPerOperation": 8,
+      "recalcStylePerOperation": 14,
+      "paintPerOperation": 14
+    },
+    "diff-stream-full-update-burst": {
+      "wallMs": 7500,
+      "longTaskCount": 14,
+      "maxLongTaskMs": 350,
+      "mainThreadBusyRatio": 0.82,
+      "activeBusyRatio": 0.9,
+      "layoutPerOperation": 2.5,
+      "recalcStylePerOperation": 5,
+      "paintPerOperation": 5,
+      "streamUpdateHighlightP95Ms": 160,
+      "streamUpdateHighlightMaxMs": 320
+    },
+    "diff-stream-append-burst": {
+      "wallMs": 7500,
+      "longTaskCount": 14,
+      "maxLongTaskMs": 350,
+      "mainThreadBusyRatio": 0.82,
+      "activeBusyRatio": 0.9,
+      "layoutPerOperation": 2.5,
+      "recalcStylePerOperation": 5,
+      "paintPerOperation": 5,
+      "streamUpdateHighlightP95Ms": 160,
+      "streamUpdateHighlightMaxMs": 320
+    }
+  }
+}

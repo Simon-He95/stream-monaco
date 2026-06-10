@@ -54,20 +54,34 @@ async function waitForPort(port, ms = 20000) {
   }
 }
 
-function killProcessTree(child) {
-  if (!child || child.killed)
+function isProcessAlive(child) {
+  return child.exitCode == null && child.signalCode == null
+}
+
+function signalProcessTree(child, signal) {
+  if (!child)
+    return
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    }
+    catch {}
+  }
+  if (!isProcessAlive(child))
     return
   try {
-    child.kill('SIGTERM')
+    child.kill(signal)
   }
-  catch { }
-  // Fallback hard kill after a short grace period.
+  catch {}
+}
+
+function killProcessTree(child) {
+  if (!child)
+    return
+  signalProcessTree(child, 'SIGTERM')
   setTimeout(() => {
-    try {
-      if (!child.killed)
-        child.kill('SIGKILL')
-    }
-    catch { }
+    signalProcessTree(child, 'SIGKILL')
   }, 3000).unref?.()
 }
 
@@ -79,7 +93,7 @@ async function run() {
   const vite = spawn(
     'pnpm',
     ['-C', demoDir, 'dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
-    { stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
+    { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, detached: process.platform !== 'win32' },
   )
 
   const logs = []

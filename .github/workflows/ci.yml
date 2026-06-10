@@ -85,7 +85,10 @@ jobs:
 
   playwright-smoke:
     runs-on: ubuntu-22.04
-    needs: test
+    needs: [lint, test]
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.38.0-jammy
 
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +99,7 @@ jobs:
       - name: Set node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 22
           cache: pnpm
 
       - run: corepack enable
@@ -104,11 +107,49 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
       - name: Diff smoke
         run: pnpm smoke:diff
 
       - name: Height stability smoke
         run: pnpm smoke:height-stability
+
+  performance-gate:
+    runs-on: ubuntu-22.04
+    needs: [playwright-smoke]
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.38.0-jammy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Performance gate
+        run: pnpm perf:gate:ci
+
+      - name: Analyze performance report
+        if: always()
+        run: pnpm perf:analyze || true
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-monaco-performance-report
+          path: .perf/*
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14

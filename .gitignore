@@ -13,4 +13,6 @@ logs
 *-error.log
 .eslintcache
 tmp
-
+.perf/
+scripts/.perf-app/
+scripts/performance-baseline.json

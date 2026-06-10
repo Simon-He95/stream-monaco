@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { splitTextByLineBreakCount } from '../src/utils/textChunks'
 
 function installRafMocks() {
   vi.stubGlobal('requestAnimationFrame', (cb: any) => {
@@ -26,6 +27,7 @@ async function loadDiffEditorManager() {
       let value = initialValue
       let languageId = initialLanguage
       let alternativeVersionId = 1
+      let getValueCallCount = 0
       const contentSizeListeners = new Set<() => void>()
       const contentChangeListeners = new Set<() => void>()
 
@@ -49,7 +51,11 @@ async function loadDiffEditorManager() {
 
       return {
         getValue() {
+          getValueCallCount += 1
           return value
+        },
+        __getGetValueCallCount() {
+          return getValueCallCount
         },
         setValue(next: string) {
           value = next
@@ -339,6 +345,48 @@ describe('DiffEditorManager inline streaming updates', () => {
     manager.cleanup()
   })
 
+  it('does not reread modified model value during pending replacement flush', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+    const before = modified.__getGetValueCallCount()
+
+    manager.updateDiff(
+      'line 1\nline 2\n',
+      'line 1\nchanged\n',
+      'typescript',
+    )
+    await waitForAsyncWork()
+
+    expect(modified.__getGetValueCallCount()).toBe(before)
+    expect(modified.getValue()).toBe('line 1\nchanged\n')
+    manager.cleanup()
+  })
+
+  it('does not reread modified model value during updateModified replacement', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+    const before = modified.__getGetValueCallCount()
+
+    manager.updateModified('line 1\nchanged\n', 'typescript')
+    await waitForAsyncWork()
+
+    expect(modified.__getGetValueCallCount()).toBe(before)
+    expect(modified.getValue()).toBe('line 1\nchanged\n')
+    manager.cleanup()
+  })
+
+  it('syncs external modified edits before updateModified replacement', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { modified } = manager.getDiffModels()
+
+    modified.setValue('external\n')
+    manager.updateModified('external changed\n', 'typescript')
+    await waitForAsyncWork()
+
+    expect(modified.getValue()).toBe('external changed\n')
+    manager.cleanup()
+  })
+
   it('keeps side-by-side diff streaming appends byte-for-byte aligned', async () => {
     const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
     const initial = 'line 1\nline 2\n'
@@ -370,6 +418,61 @@ describe('DiffEditorManager inline streaming updates', () => {
     const { original, modified } = manager.getDiffModels()
     expect(original.getValue()).toBe(initial + originalTail)
     expect(modified.getValue()).toBe(initial + modifiedTail)
+    manager.cleanup()
+  })
+
+  it('splits large append text without changing line endings or trailing text', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const text = Array.from(
+      { length: 220 },
+      (_, i) => `line-${i} ${'x'.repeat(24)}\r\n`,
+    ).join('') + 'tail without newline'
+    const chunks = splitTextByLineBreakCount(text, 50)
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.join('')).toBe(text)
+    manager.cleanup()
+  })
+
+  it('chunks many buffered diff appends and preserves modified text', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const initial = 'line 1\nline 2\n'
+    const parts = Array.from({ length: 60 }, (_, i) => `\nline-${i}`)
+    const appendSpy = vi.spyOn(manager, 'appendToModel' as any)
+
+    manager.appendBufferModifiedDiff.push(...parts)
+    await manager.flushAppendBufferDiff()
+
+    const { modified } = manager.getDiffModels()
+    expect(appendSpy).toHaveBeenCalledTimes(parts.length)
+    expect(modified.getValue()).toBe(initial + parts.join(''))
+    manager.cleanup()
+  })
+
+  it('preserves exact CRLF text with no trailing newline through append buffer flush', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const tail = Array.from({ length: 450 }, (_, i) => `line-${i}`).join('\r\n') + 'NO_EOL'
+    // Push a single large chunk that will be split internally
+    manager.appendBufferModifiedDiff.push(tail)
+    await manager.flushAppendBufferDiff()
+
+    const { modified } = manager.getDiffModels()
+    expect(modified.getValue().endsWith(tail)).toBe(true)
+    manager.cleanup()
+  })
+
+  it('original-only append does not modify the modified model content', async () => {
+    const manager = await createManager({ renderSideBySide: true, useInlineViewWhenSpaceIsLimited: false })
+    const { original, modified } = manager.getDiffModels()
+    const initialModified = modified.getValue()
+
+    manager.appendBufferOriginalDiff.push('only original\n')
+    await manager.flushAppendBufferDiff()
+
+    // Modified side must be completely untouched
+    expect(modified.getValue()).toBe(initialModified)
+    // Original must have received the append
+    expect(original.getValue().endsWith('only original\n')).toBe(true)
     manager.cleanup()
   })
 

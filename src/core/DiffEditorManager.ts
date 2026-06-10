@@ -27,6 +27,9 @@ import { log } from '../utils/logger'
 import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 import {
+  countLineBreaks,
+} from '../utils/textChunks'
+import {
   applyDiffRootAppearanceClass,
   resolveDiffUnchangedLineInfoRailMetrics,
 } from './diffAppearance'
@@ -4331,18 +4334,19 @@ export class DiffEditorManager {
       })
       if (!this.diffEditorView)
         return
-      const hasV = this.hasVerticalScrollbarModified()
-      log('diff', 'hasVerticalScrollbarModified ->', hasV)
       if (
         !(
           this.diffAutoScroll
           && this.autoScrollOnUpdate
           && this.shouldAutoScrollDiff
-          && hasV
         )
       ) {
         return
       }
+      const hasV = this.hasVerticalScrollbarModified()
+      log('diff', 'hasVerticalScrollbarModified ->', hasV)
+      if (!hasV)
+        return
       const me = this.diffEditorView.getModifiedEditor()
       const model = me.getModel()
       const currentLine = model?.getLineCount() ?? 1
@@ -4631,6 +4635,7 @@ export class DiffEditorManager {
     }
     this.diffHeightManager = createHeightManager(container, () =>
       this.computedHeight())
+
     this.diffHeightManager.update()
 
     // If the initial computed height already reaches (or is very near) the
@@ -4654,7 +4659,7 @@ export class DiffEditorManager {
     this.diffPresentationDisposables.push(
       this.diffEditorView.onDidUpdateDiff(() => {
         this.diffComputedVersions = this.captureCurrentDiffVersions()
-        this.syncDiffEditorLayoutToContainer()
+        this.scheduleSyncDiffEditorLayoutToContainer()
         this.scheduleSyncDiffPresentationDecorations()
       }),
     )
@@ -4939,6 +4944,7 @@ export class DiffEditorManager {
   updateModified(newCode: string, codeLanguage?: string) {
     if (!this.diffEditorView || !this.modifiedModel)
       return
+    this.syncLastKnownModified()
     if (codeLanguage) {
       const lang = processedLanguage(codeLanguage)
       if (lang && this.modifiedModel.getLanguageId() !== lang)
@@ -4958,7 +4964,7 @@ export class DiffEditorManager {
       // If we have buffered appends, apply them first so the model matches the
       // optimistic lastKnownModifiedCode before computing a minimal edit.
       this.flushModifiedAppendBufferSync()
-      const prevAfterFlush = this.modifiedModel.getValue()
+      const prevAfterFlush = this.lastKnownModifiedCode ?? this.modifiedModel.getValue()
       const prevLine = this.modifiedModel.getLineCount()
       this.applyMinimalEditToModel(this.modifiedModel, prevAfterFlush, newCode)
       const newLine = this.modifiedModel.getLineCount()
@@ -5326,6 +5332,7 @@ export class DiffEditorManager {
 
     const { original, modified, lang } = this.pendingDiffUpdate
     this.pendingDiffUpdate = null
+    this.syncLastKnownModified()
 
     // Ensure models match any buffered streaming appends before applying minimal
     // edits or non-prefix updates, otherwise ranges can be computed against an
@@ -5363,7 +5370,7 @@ export class DiffEditorManager {
       this.lastKnownOriginalCode = original
     }
 
-    const prevM = m.getValue()
+    const prevM = this.lastKnownModifiedCode!
     const prevMLineCount = m.getLineCount()
     const modifiedTailAppend
       = prevM !== modified
@@ -5431,6 +5438,57 @@ export class DiffEditorManager {
     this.appendToModel(this.modifiedModel, text)
   }
 
+  private splitAppendTextForProgressiveFlush(
+    text: string,
+    maxChunkChars = 12_000,
+    maxChunkLines = 200,
+  ) {
+    if (!text || text.length <= maxChunkChars)
+      return [text]
+
+    const chunks: string[] = []
+    let start = 0
+    let lineCount = 0
+    let lastSafeEnd = 0
+
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) {
+        lineCount += 1
+        lastSafeEnd = i + 1
+      }
+
+      if (i - start + 1 < maxChunkChars && lineCount < maxChunkLines)
+        continue
+
+      let end = lastSafeEnd > start ? lastSafeEnd : i + 1
+      // Avoid splitting a UTF-16 surrogate pair when we fall back to a raw
+      // character-count boundary for long single-line input.
+      if (end < text.length) {
+        const prev = text.charCodeAt(end - 1)
+        const next = text.charCodeAt(end)
+        if (
+          prev >= 0xD800
+          && prev <= 0xDBFF
+          && next >= 0xDC00
+          && next <= 0xDFFF
+        ) {
+          end += 1
+        }
+      }
+
+      chunks.push(text.slice(start, end))
+      start = end
+      i = end - 1
+      lineCount = 0
+      lastSafeEnd = start
+    }
+
+    if (start < text.length)
+      chunks.push(text.slice(start))
+
+    return chunks.length ? chunks : [text]
+  }
+
   private async flushAppendBufferDiff() {
     if (!this.diffEditorView)
       return
@@ -5460,29 +5518,26 @@ export class DiffEditorManager {
       return
     }
     let parts = this.appendBufferModifiedDiff.splice(0)
+    if (parts.length === 0) {
+      this.eagerlyGrowDiffContainerHeight()
+      return
+    }
     // If the buffered append is large, apply it in smaller sequential chunks
     // with a RAF pause between each so the editor can render and auto-scroll
     // progressively instead of jumping once all data is applied.
     const prevLineInit = model.getLineCount()
     const totalText = parts.join('')
     const totalChars = totalText.length
+    const totalLineBreaks = countLineBreaks(totalText)
     // If we received a single very large chunk, split it by lines into smaller
     // chunks so the editor can render and scroll progressively.
     if (parts.length === 1 && totalChars > 5000) {
-      const lines = totalText.split(/\r?\n/)
-      const chunkSize = 200
-      const chunks: string[] = []
-      for (let i = 0; i < lines.length; i += chunkSize) {
-        chunks.push(`${lines.slice(i, i + chunkSize).join('\n')}\n`)
-      }
-      if (chunks.length > 1) {
-        parts = chunks
-      }
+      parts = this.splitAppendTextForProgressiveFlush(totalText)
     }
     const applyChunked
       = parts.length > 1
         && (totalChars > 2000
-          || (model.getLineCount && model.getLineCount() + 0 - prevLineInit > 50))
+          || totalLineBreaks > 50)
     log('diff', 'flushAppendBufferDiff start', {
       partsCount: parts.length,
       totalChars,
@@ -5512,6 +5567,16 @@ export class DiffEditorManager {
       log('diff', 'flushAppendBufferDiff applying chunked', {
         partsLen: parts.length,
       })
+      // Seed lastKnownModifiedCode once before the chunk loop so
+      // mergeKnownAppend can use O(1) string concatenation instead of
+      // calling model.getValue() on every chunk.
+      if (this.lastKnownModifiedCode == null) {
+        this.lastKnownModifiedCode = model.getValue()
+      }
+      // Track model length incrementally to avoid calling
+      // getModelValueLength (which may fall back to O(n) getValue())
+      // on every chunk.
+      let currentLength = this.lastKnownModifiedCode.length
       let idx = 0
       for (const part of parts) {
         if (!part)
@@ -5522,19 +5587,9 @@ export class DiffEditorManager {
           partLen: part.length,
           prevLine,
         })
-        const lastColumn = model.getLineMaxColumn(prevLine)
-        const range = new monaco.Range(
-          prevLine,
-          lastColumn,
-          prevLine,
-          lastColumn,
-        )
         this.preserveNativeDiffDecorationsOnStaleAppend = true
-        this.runAsProgrammaticModifiedContentChange(() => {
-          model.applyEdits([{ range, text: part, forceMoveMarkers: true }])
-        })
-        // update lastKnownModifiedCode lazily based on model value to avoid drift
-        this.lastKnownModifiedCode = model.getValue()
+        this.appendToModel(model, part, currentLength)
+        currentLength += part.length
         const newLine = model.getLineCount()
         this.lastKnownModifiedLineCount = newLine
         // try to let the editor update layout before scheduling reveal/scroll
@@ -5571,6 +5626,9 @@ export class DiffEditorManager {
         prevLine = newLine
         log('diff', 'flushAppendBufferDiff chunk applied', { idx, newLine })
       }
+      // Sync lastKnownModifiedCode once after all chunks are applied
+      // so we have an authoritative snapshot without per-chunk O(n) cost.
+      this.lastKnownModifiedCode = model.getValue()
       // restore suppression state
       if (suppressedByFlush) {
         watcherApi.setSuppressed(false)
@@ -5581,14 +5639,8 @@ export class DiffEditorManager {
     const text = totalText
     this.appendBufferModifiedDiff.length = 0
     prevLine = model.getLineCount()
-    const lastColumn = model.getLineMaxColumn(prevLine)
-    const range = new monaco.Range(prevLine, lastColumn, prevLine, lastColumn)
     this.preserveNativeDiffDecorationsOnStaleAppend = true
-    this.runAsProgrammaticModifiedContentChange(() => {
-      model.applyEdits([{ range, text, forceMoveMarkers: true }])
-    })
-    // update lastKnownModifiedCode lazily based on model value to avoid drift
-    this.lastKnownModifiedCode = model.getValue()
+    this.appendToModel(model, text)
 
     const newLine = model.getLineCount()
     // keep internal line count cache in sync
@@ -5669,9 +5721,75 @@ export class DiffEditorManager {
     }
   }
 
-  private appendToModel(model: monaco.editor.ITextModel, appendText: string) {
+  private getModelValueLength(model: monaco.editor.ITextModel) {
+    const getValueLength = (model as any).getValueLength
+    if (typeof getValueLength === 'function') {
+      try {
+        return getValueLength.call(model) as number
+      }
+      catch {}
+    }
+    return model.getValue().length
+  }
+
+  private mergeKnownAppend(
+    known: string | null,
+    appendText: string,
+    previousLength: number,
+    model: monaco.editor.ITextModel,
+  ) {
+    if (known == null)
+      return model.getValue()
+
+    const nextLength = previousLength + appendText.length
+
+    if (known.length === previousLength)
+      return known + appendText
+
+    if (
+      known.length >= nextLength
+      && known.slice(previousLength, nextLength) === appendText
+    ) {
+      return known
+    }
+
+    return model.getValue()
+  }
+
+  private syncKnownCodeAfterAppend(
+    model: monaco.editor.ITextModel,
+    appendText: string,
+    previousLength: number,
+  ) {
+    if (model === this.originalModel) {
+      this.lastKnownOriginalCode = this.mergeKnownAppend(
+        this.lastKnownOriginalCode,
+        appendText,
+        previousLength,
+        model,
+      )
+      return
+    }
+
+    if (model === this.modifiedModel) {
+      this.lastKnownModifiedCode = this.mergeKnownAppend(
+        this.lastKnownModifiedCode,
+        appendText,
+        previousLength,
+        model,
+      )
+    }
+  }
+
+  private appendToModel(
+    model: monaco.editor.ITextModel,
+    appendText: string,
+    knownLength?: number,
+  ) {
     if (!appendText)
       return
+    const previousLength
+      = knownLength != null ? knownLength : this.getModelValueLength(model)
     const lastLine = model.getLineCount()
     const lastColumn = model.getLineMaxColumn(lastLine)
     const range = new monaco.Range(lastLine, lastColumn, lastLine, lastColumn)
@@ -5681,6 +5799,7 @@ export class DiffEditorManager {
     if (model === this.modifiedModel) {
       this.lastKnownModifiedLineCount = model.getLineCount()
     }
+    this.syncKnownCodeAfterAppend(model, appendText, previousLength)
   }
 
   private applyModelEdit(model: monaco.editor.ITextModel, fn: () => void) {
