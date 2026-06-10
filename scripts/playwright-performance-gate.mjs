@@ -1765,7 +1765,7 @@ function attachAnalysis(report, budget) {
   const scenarioBudgets = budget.scenarioBudgets || {}
   const results = report.results.map(result => ({
     ...result,
-    analysis: classifyScenario(result, scenarioBudgets[result.name], budget),
+    analysis: classifyScenario(result, scenarioBudgets[stripRepeatSuffix(result.name)], budget),
   }))
   return {
     ...report,
@@ -1934,11 +1934,16 @@ function compareValue(failures, name, metric, actual, limit, unit = '') {
     failures.push(`${name}: ${metric}=${round(actual)}${unit} > budget ${limit}${unit}`)
 }
 
+function stripRepeatSuffix(name) {
+  return name.replace(/#\d+$/, '')
+}
+
 function checkHardBudgets(results, budget) {
   const failures = []
   const scenarioBudgets = budget.scenarioBudgets || {}
   for (const result of results) {
-    const b = { ...(budget.failBudget || {}), ...(scenarioBudgets[result.name] || {}) }
+    const scenarioName = stripRepeatSuffix(result.name)
+    const b = { ...(budget.failBudget || {}), ...(scenarioBudgets[scenarioName] || {}) }
     if (!b)
       continue
     compareValue(failures, result.name, 'sampleSummary.p95', result.sampleSummary?.p95, b.sampleP95Ms, 'ms')

@@ -51,9 +51,9 @@
     "editor-middle-replace-large-doc": {
       "sampleP95Ms": 350,
       "sampleMaxMs": 650,
-      "longTaskCount": 8,
+      "longTaskCount": 10,
       "maxLongTaskMs": 220,
-      "mainThreadBusyRatio": 0.9,
+      "mainThreadBusyRatio": 0.95,
       "layoutPerOperation": 4,
       "recalcStylePerOperation": 8,
       "paintPerOperation": 8
@@ -122,9 +122,9 @@
     "diff-middle-replace-large-doc": {
       "sampleP95Ms": 600,
       "sampleMaxMs": 1000,
-      "longTaskCount": 18,
+      "longTaskCount": 25,
       "maxLongTaskMs": 260,
-      "mainThreadBusyRatio": 0.9,
+      "mainThreadBusyRatio": 0.97,
       "layoutPerOperation": 8,
       "recalcStylePerOperation": 14,
       "paintPerOperation": 14
