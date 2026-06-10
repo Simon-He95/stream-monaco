@@ -23,7 +23,9 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          # Keep the release runner aligned with CI performance-gate. The perf
+          # gate imports Vite 7, which requires a modern Node runtime.
+          node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org/
 
@@ -37,7 +39,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
-      - run: pnpm publish --no-git-checks --access public
+      # release:verify has already run above. package.json also has
+      # prepublishOnly=pnpm release:verify, so publish must not run it again.
+      - run: pnpm publish --ignore-scripts --no-git-checks --access public
         if: env.NPM_TOKEN_PRESENT == 'true'
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
