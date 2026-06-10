@@ -50,7 +50,10 @@ const requireBaseline = has('--require-baseline')
 const skipBaseline = has('--skip-baseline')
 const allowPartialBaseline = has('--allow-partial-baseline')
 const headed = has('--headed')
-const scenarioFilter = getArg('--scenario', '')
+// `--scenario` is kept for compatibility; `--scenarios=a,b,c` is used by CI
+// so PR checks can run a small deterministic canary instead of the full matrix.
+const scenarioArg = getArg('--scenarios', getArg('--scenario', ''))
+const scenarioFilters = scenarioArg.split(',').map(s => s.trim()).filter(Boolean)
 const repeatArgRaw = getArg('--repeat', '1')
 const repeatArg = Number(repeatArgRaw)
 const repeatExplicit = args.some(a => a.startsWith('--repeat='))
@@ -67,7 +70,7 @@ if (skipBaseline && (updateBaseline || requireBaseline)) {
   process.exit(1)
 }
 
-if (updateBaseline && scenarioFilter && !allowPartialBaseline) {
+if (updateBaseline && scenarioFilters.length && !allowPartialBaseline) {
   console.error('Refusing to update a partial baseline. Remove --scenario, or pass --allow-partial-baseline intentionally.')
   process.exit(1)
 }
@@ -103,10 +106,17 @@ const ALL_SCENARIOS = [
   'diff-stream-full-update-burst',
   'diff-stream-append-burst',
 ]
-const SCENARIOS = ALL_SCENARIOS.filter(name => !scenarioFilter || name === scenarioFilter)
+
+const scenarioFilterSet = new Set(scenarioFilters)
+const unknownScenarios = scenarioFilters.filter(name => !ALL_SCENARIOS.includes(name))
+if (unknownScenarios.length) {
+  throw new Error(`Unknown performance scenario(s): ${unknownScenarios.join(', ')}. Available scenarios: ${ALL_SCENARIOS.join(', ')}`)
+}
+
+const SCENARIOS = ALL_SCENARIOS.filter(name => !scenarioFilterSet.size || scenarioFilterSet.has(name))
 
 if (!SCENARIOS.length) {
-  throw new Error(`Unknown performance scenario "${scenarioFilter}". Available scenarios: ${ALL_SCENARIOS.join(', ')}`)
+  throw new Error(`No performance scenarios selected. Available scenarios: ${ALL_SCENARIOS.join(', ')}`)
 }
 
 function nowIso() {

@@ -99,7 +99,7 @@ jobs:
       - name: Set node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       - run: corepack enable
@@ -115,7 +115,7 @@ jobs:
 
   performance-gate:
     runs-on: ubuntu-22.04
-    needs: [lint, test]
+    needs: [playwright-smoke]
     timeout-minutes: 30
     container:
       image: mcr.microsoft.com/playwright:v1.38.0-jammy
@@ -129,7 +129,7 @@ jobs:
       - name: Set node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       - run: corepack enable

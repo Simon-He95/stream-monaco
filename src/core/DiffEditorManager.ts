@@ -28,7 +28,6 @@ import { createRafScheduler } from '../utils/raf'
 import { createScrollWatcherForEditor } from '../utils/scroll'
 import {
   countLineBreaks,
-  splitTextByLineBreakCount,
 } from '../utils/textChunks'
 import {
   applyDiffRootAppearanceClass,
@@ -5439,6 +5438,57 @@ export class DiffEditorManager {
     this.appendToModel(this.modifiedModel, text)
   }
 
+  private splitAppendTextForProgressiveFlush(
+    text: string,
+    maxChunkChars = 12_000,
+    maxChunkLines = 200,
+  ) {
+    if (!text || text.length <= maxChunkChars)
+      return [text]
+
+    const chunks: string[] = []
+    let start = 0
+    let lineCount = 0
+    let lastSafeEnd = 0
+
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) {
+        lineCount += 1
+        lastSafeEnd = i + 1
+      }
+
+      if (i - start + 1 < maxChunkChars && lineCount < maxChunkLines)
+        continue
+
+      let end = lastSafeEnd > start ? lastSafeEnd : i + 1
+      // Avoid splitting a UTF-16 surrogate pair when we fall back to a raw
+      // character-count boundary for long single-line input.
+      if (end < text.length) {
+        const prev = text.charCodeAt(end - 1)
+        const next = text.charCodeAt(end)
+        if (
+          prev >= 0xD800
+          && prev <= 0xDBFF
+          && next >= 0xDC00
+          && next <= 0xDFFF
+        ) {
+          end += 1
+        }
+      }
+
+      chunks.push(text.slice(start, end))
+      start = end
+      i = end - 1
+      lineCount = 0
+      lastSafeEnd = start
+    }
+
+    if (start < text.length)
+      chunks.push(text.slice(start))
+
+    return chunks.length ? chunks : [text]
+  }
+
   private async flushAppendBufferDiff() {
     if (!this.diffEditorView)
       return
@@ -5468,6 +5518,10 @@ export class DiffEditorManager {
       return
     }
     let parts = this.appendBufferModifiedDiff.splice(0)
+    if (parts.length === 0) {
+      this.eagerlyGrowDiffContainerHeight()
+      return
+    }
     // If the buffered append is large, apply it in smaller sequential chunks
     // with a RAF pause between each so the editor can render and auto-scroll
     // progressively instead of jumping once all data is applied.
@@ -5478,10 +5532,7 @@ export class DiffEditorManager {
     // If we received a single very large chunk, split it by lines into smaller
     // chunks so the editor can render and scroll progressively.
     if (parts.length === 1 && totalChars > 5000) {
-      const chunks = splitTextByLineBreakCount(totalText, 200)
-      if (chunks.length > 1) {
-        parts = chunks
-      }
+      parts = this.splitAppendTextForProgressiveFlush(totalText)
     }
     const applyChunked
       = parts.length > 1
