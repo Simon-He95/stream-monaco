@@ -110,7 +110,7 @@
     "validate:diff-unchanged-reveal": "node scripts/playwright-diff-unchanged-reveal-validate.mjs",
     "validate:markstream-diff-theme": "node scripts/playwright-markstream-diff-theme-validate.mjs",
     "compare:diff-ux": "node scripts/playwright-diff-ux-compare.mjs",
-    "test": "vitest",
+    "test": "vitest --run",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
